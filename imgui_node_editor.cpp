@@ -2725,6 +2725,8 @@ void ed::EditorContext::LoadSettingsFromMemory(const char* data, size_t size)
 
 const char* ed::EditorContext::SaveSettingsToMemory(size_t* outSize)
 {
+    // Application changes can occur between frames without an interaction.
+    UpdateSettings();
     m_SettingsMemory = m_Settings.Serialize(m_Config.SettingsContent);
     if (outSize)
         *outSize = m_SettingsMemory.size();

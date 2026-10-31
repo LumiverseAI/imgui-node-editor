@@ -596,3 +596,22 @@ TEST_CASE(CLocalePreserved, "settings.c_locale_is_preserved", "JSON-2", test::Te
     if (tested == 0)
         test::Skip("no locale with a decimal comma is installed");
 }
+
+TEST_CASE(ExplicitSaveCapturesApplicationSelection, "settings.explicit_save_captures_application_selection", "", test::TestFlags_None)
+{
+    test::Storage storage;
+    test::Session session(&storage);
+    session.DefaultContent = [](int) {
+        ed::BeginNode(1);
+        ImGui::TextUnformatted("Node");
+        ed::EndNode();
+    };
+    session.Run(3);
+    session.Use([] {
+        ed::SelectNode(1);
+        const std::string saved = ed::SaveSettingsToMemory();
+        ed::ClearSelection();
+        ed::LoadSettingsFromMemory(saved.c_str());
+        test::Check(ed::IsNodeSelected(1), "explicit save retains application selection: %s", saved.c_str());
+    });
+}
