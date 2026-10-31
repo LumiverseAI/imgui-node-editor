@@ -2370,6 +2370,7 @@ void ed::EditorContext::ClearState()
         m_HasMemorySettings = true;
 
     m_Settings = Settings();
+    m_IsFirstFrame = true; // A following load can select nodes when they are resubmitted.
     MakeDirty(SaveReasonFlags::RemoveNode | SaveReasonFlags::Selection | SaveReasonFlags::Navigation);
 
     FreeDeletedObjects();

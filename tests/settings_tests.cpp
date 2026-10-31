@@ -607,11 +607,21 @@ TEST_CASE(ExplicitSaveCapturesApplicationSelection, "settings.explicit_save_capt
         ed::EndNode();
     };
     session.Run(3);
-    session.Use([] {
+    std::string saved;
+    session.Use([&] {
         ed::SelectNode(1);
-        const std::string saved = ed::SaveSettingsToMemory();
+        saved = ed::SaveSettingsToMemory();
         ed::ClearSelection();
         ed::LoadSettingsFromMemory(saved.c_str());
         test::Check(ed::IsNodeSelected(1), "explicit save retains application selection: %s", saved.c_str());
     });
+    session.Use([&] {
+        ed::ClearState();
+        ed::LoadSettingsFromMemory(saved.c_str());
+    });
+    session.Run(3);
+    session.Use([] {
+        test::Check(ed::IsNodeSelected(1), "loading a cleared document restores its selection when nodes return");
+    });
+
 }
