@@ -296,7 +296,9 @@ Sorry, child windows are incompatible with the canvas of imgui-node-editor, and 
 
 ImGuiEx::Canvas::~Canvas()
 {
+# if defined(IMGUI_HAS_INPUT_TEXT_MULTILINE_OVERRIDE) || defined(IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS)
     ImGuiContext* g = ImGui::GetCurrentContext();
+# endif
     if (s_CanvasInLocalSpace == this)
     {
         s_CanvasInLocalSpace = nullptr;
