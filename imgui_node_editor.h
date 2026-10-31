@@ -1,6 +1,4 @@
 //------------------------------------------------------------------------------
-// VERSION 0.9.1
-//
 // LICENSE
 //   This software is dual-licensed to the public domain and under the following
 //   license: you are granted a perpetual, irrevocable license to copy, modify,
@@ -9,31 +7,22 @@
 // CREDITS
 //   Written by Michal Cichon
 //------------------------------------------------------------------------------
-# ifndef __IMGUI_NODE_EDITOR_H__
-# define __IMGUI_NODE_EDITOR_H__
+# ifndef IMGUI_NODE_EDITOR_H
+# define IMGUI_NODE_EDITOR_H
 # pragma once
 
-//
-// Adaptations for ImGui Bundle are noted with [ADAPT_IMGUI_BUNDLE]
-//
-// [ADAPT_IMGUI_BUNDLE]
-#ifdef IMGUI_BUNDLE_PYTHON_API
-#include <vector>
-#endif
-// IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API is always defined (even when building python bindings),
-// but is used as a marker to exclude certain functions from the python binding code.
-#define IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 
 //------------------------------------------------------------------------------
 # include <imgui.h>
 # include <cstdint> // std::uintXX_t
 # include <utility> // std::move
-#include <string>
 
 
 //------------------------------------------------------------------------------
+// docs/API.md has the rules that span several functions: the order of calls in a
+// frame, IDs, the create and delete protocols, input, persistence and coordinates.
 # define IMGUI_NODE_EDITOR_VERSION      "0.10.0"
-# define IMGUI_NODE_EDITOR_VERSION_NUM  001000
+# define IMGUI_NODE_EDITOR_VERSION_NUM  1000
 
 
 //------------------------------------------------------------------------------
@@ -51,6 +40,9 @@ namespace NodeEditor {
 struct NodeId;
 struct LinkId;
 struct PinId;
+struct NodeState;
+struct ViewState;
+struct Edit;
 
 
 //------------------------------------------------------------------------------
@@ -73,9 +65,17 @@ enum class CanvasSizeMode
     CenterOnly,             // Previous view will be centered on new view
 };
 
+enum class EditType
+{
+    Move,                   // nodes dragged
+    Resize,                 // a group resized
+    Select,                 // the selection changed
+    Navigate                // the view moved or zoomed, with Config::ReportNavigationEdits
+};
+
 
 //------------------------------------------------------------------------------
-enum class SaveReasonFlags: uint32_t
+enum class SaveReasonFlags: std::uint32_t
 {
     None       = 0x00000000,
     Navigation = 0x00000001,
@@ -87,29 +87,28 @@ enum class SaveReasonFlags: uint32_t
     User       = 0x00000040
 };
 
-inline SaveReasonFlags operator |(SaveReasonFlags lhs, SaveReasonFlags rhs) { return static_cast<SaveReasonFlags>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs)); }
-inline SaveReasonFlags operator &(SaveReasonFlags lhs, SaveReasonFlags rhs) { return static_cast<SaveReasonFlags>(static_cast<uint32_t>(lhs) & static_cast<uint32_t>(rhs)); }
+inline SaveReasonFlags operator |(SaveReasonFlags lhs, SaveReasonFlags rhs) { return static_cast<SaveReasonFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs)); }
+inline SaveReasonFlags operator &(SaveReasonFlags lhs, SaveReasonFlags rhs) { return static_cast<SaveReasonFlags>(static_cast<std::uint32_t>(lhs) & static_cast<std::uint32_t>(rhs)); }
 
-using ConfigSaveSettings     = bool   (*)(const char* data, size_t size, SaveReasonFlags reason, void* userPointer);
-using ConfigLoadSettings     = size_t (*)(char* data, void* userPointer);
+enum class SettingsContentFlags: std::uint32_t
+{
+    None      = 0x00000000,
+    Nodes     = 0x00000001,
+    Selection = 0x00000002,
+    View      = 0x00000004,
+    All       = 0x00000007
+};
 
-using ConfigSaveNodeSettings = bool   (*)(NodeId nodeId, const char* data, size_t size, SaveReasonFlags reason, void* userPointer);
-using ConfigLoadNodeSettings = size_t (*)(NodeId nodeId, char* data, void* userPointer);
-
-using ConfigSession          = void   (*)(void* userPointer);
+inline SettingsContentFlags operator |(SettingsContentFlags lhs, SettingsContentFlags rhs) { return static_cast<SettingsContentFlags>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs)); }
+inline SettingsContentFlags operator &(SettingsContentFlags lhs, SettingsContentFlags rhs) { return static_cast<SettingsContentFlags>(static_cast<std::uint32_t>(lhs) & static_cast<std::uint32_t>(rhs)); }
 
 struct Config
 {
     using CanvasSizeModeAlias = ax::NodeEditor::CanvasSizeMode;
 
-    std::string             SettingsFile;
-    ConfigSession           BeginSaveSession;
-    ConfigSession           EndSaveSession;
-    ConfigSaveSettings      SaveSettings;
-    ConfigLoadSettings      LoadSettings;
-    ConfigSaveNodeSettings  SaveNodeSettings;
-    ConfigLoadNodeSettings  LoadNodeSettings;
-    void*                   UserPointer;
+    const char*             SettingsName;           // Section [NodeEditor][SettingsName] in imgui.ini, see InstallSettingsHandler(); copied by CreateEditor(); nullptr keeps the editor out of imgui.ini
+    SettingsContentFlags    SettingsContent;        // What the settings hold: node layout, the selection and the view; leave Nodes out when the application keeps node layout itself
+    void*                   UserPointer;            // The application's; the editor doesn't use it
     ImVector<float>         CustomZoomLevels;
     CanvasSizeModeAlias     CanvasSizeMode;
     int                     DragButtonIndex;        // Mouse button index drag action will react to (0-left, 1-right, 2-middle)
@@ -118,23 +117,12 @@ struct Config
     int                     ContextMenuButtonIndex; // Mouse button index context menu action will react to (0-left, 1-right, 2-middle)
     bool                    EnableSmoothZoom;
     float                   SmoothZoomPower;
-
-    // [ADAPT_IMGUI_BUNDLE]
-    //
-    // By default, ImGui::TextWrapped() and ImGui::Separator(), and ImGui::SliderXXX
-    // will not work in a Node because they will not respect the node's bounds.
-    // Instead, they will use the width of the whole window.
-    // Set ForceWindowContentWidthToNodeWidth to true to fix this (this is disabled by default).
-    bool                    ForceWindowContentWidthToNodeWidth;
+    bool                    RasterizeTextForZoom;   // Text is rasterized for the zoom, so it stays sharp; needs Dear ImGui 1.92 and a renderer backend that sets ImGuiBackendFlags_RendererHasTextures
+    bool                    ReportNavigationEdits;  // Edits report navigation too, once the view settles
 
     Config()
-        : SettingsFile("NodeEditor.json")
-        , BeginSaveSession(nullptr)
-        , EndSaveSession(nullptr)
-        , SaveSettings(nullptr)
-        , LoadSettings(nullptr)
-        , SaveNodeSettings(nullptr)
-        , LoadNodeSettings(nullptr)
+        : SettingsName("NodeEditor")
+        , SettingsContent(SettingsContentFlags::All)
         , UserPointer(nullptr)
         , CustomZoomLevels()
         , CanvasSizeMode(CanvasSizeModeAlias::FitVerticalView)
@@ -148,7 +136,8 @@ struct Config
 # else
         , SmoothZoomPower(1.3f)
 # endif
-        , ForceWindowContentWidthToNodeWidth(false)
+        , RasterizeTextForZoom(true)
+        , ReportNavigationEdits(false)
     {
     }
 };
@@ -209,11 +198,12 @@ enum StyleVar
     StyleVar_SnapLinkToPinDir,
     StyleVar_HoveredNodeBorderOffset,
     StyleVar_SelectedNodeBorderOffset,
-    StyleVar_GridSize,
 
     StyleVar_Count
 };
 
+// Flags and booleans are floats, the type style variables push, and HoverNodeBorderOffset
+// is pushed as StyleVar_HoveredNodeBorderOffset; both are kept for compatibility.
 struct Style
 {
     ImVec4  NodePadding;
@@ -235,24 +225,15 @@ struct Style
     ImVec2  PivotAlignment;
     ImVec2  PivotSize;
     ImVec2  PivotScale;
-    float   PinCorners;
+    float   PinCorners;               // ImDrawFlags
     float   PinRadius;
     float   PinArrowSize;
     float   PinArrowWidth;
     float   GroupRounding;
     float   GroupBorderWidth;
-    float   HighlightConnectedLinks;
-    float   SnapLinkToPinDir; // when true link will start on the line defined by pin direction
-    ImVec2  GridSize;         // size of a background grid cell, in canvas units (x and y independent)
+    float   HighlightConnectedLinks;  // a boolean: non-zero highlights the links of a selected node
+    float   SnapLinkToPinDir;         // a boolean: non-zero starts links on the line defined by pin direction
     ImVec4  Colors[StyleColor_Count];
-
-    // [ADAPT_IMGUI_BUNDLE]
-#ifdef IMGUI_BUNDLE_PYTHON_API
-        // python adapter for Style::Colors[StyleColor_Count]
-        // You can query and modify those values (0 <= idxColor < StyleColor.count)
-        inline IMGUI_NODE_EDITOR_API ImVec4& Color_(StyleColor idxColor) { IM_ASSERT( (idxColor >=0) && (idxColor < StyleColor_Count)); return Colors[idxColor]; }
-        inline IMGUI_NODE_EDITOR_API void SetColor_(StyleColor idxColor, ImVec4 color) { IM_ASSERT( (idxColor >=0) && (idxColor < StyleColor_Count)); Colors[idxColor] = color; }
-#endif
 
     Style()
     {
@@ -275,7 +256,7 @@ struct Style
         PivotAlignment           = ImVec2(0.5f, 0.5f);
         PivotSize                = ImVec2(0.0f, 0.0f);
         PivotScale               = ImVec2(1, 1);
-        PinCorners               = ImDrawFlags_RoundCornersAll;
+        PinCorners               = 0.0f; // ImDrawFlags without corner flags round all corners
         PinRadius                = 0.0f;
         PinArrowSize             = 0.0f;
         PinArrowWidth            = 0.0f;
@@ -283,7 +264,6 @@ struct Style
         GroupBorderWidth         = 1.0f;
         HighlightConnectedLinks  = 0.0f;
         SnapLinkToPinDir         = 0.0f;
-        GridSize                 = ImVec2(32.0f, 32.0f);
 
         Colors[StyleColor_Bg]                 = ImColor( 60,  60,  70, 200);
         Colors[StyleColor_Grid]               = ImColor(120, 120, 120,  40);
@@ -313,19 +293,28 @@ struct EditorContext;
 
 
 //------------------------------------------------------------------------------
-// --- Editor context lifecycle --------------------------------------------
-// You may keep multiple editors and switch between them with SetCurrentEditor.
-// Pass a Config to CreateEditor to set e.g. SettingsFile (where node positions
-// are persisted) or to override the default mouse buttons.
 IMGUI_NODE_EDITOR_API void SetCurrentEditor(EditorContext* ctx);
 IMGUI_NODE_EDITOR_API EditorContext* GetCurrentEditor();
 IMGUI_NODE_EDITOR_API EditorContext* CreateEditor(const Config* config = nullptr);
 IMGUI_NODE_EDITOR_API void DestroyEditor(EditorContext* ctx);
 IMGUI_NODE_EDITOR_API const Config& GetConfig(EditorContext* ctx = nullptr);
 
-// --- Style ----------------------------------------------------------------
-// Editor-specific style, separate from ImGui::GetStyle().
-// Push/PopStyleColor and Push/PopStyleVar work like the ImGui equivalents.
+// Keeps the state of editors with a Config::SettingsName in imgui.ini, next to
+// ImGui's windows. Call once per ImGui context, before ImGui reads .ini data:
+// before the first NewFrame() when io.IniFilename is set, otherwise before
+// LoadIniSettingsFromMemory(). An editor created at any time starts from the
+// latest state of its section. nullptr: the current ImGui context.
+IMGUI_NODE_EDITOR_API void InstallSettingsHandler(ImGuiContext* context = nullptr);
+
+// Settings the application stores itself, with or without the settings handler.
+// The editor doesn't save on its own: once WantSaveSettings() is true, store
+// SaveSettingsToMemory() and call ClearWantSaveSettings().
+IMGUI_NODE_EDITOR_API void            LoadSettingsFromMemory(const char* data, size_t size = 0); // before the first Begin(), takes precedence over imgui.ini; later, replaces the state it holds; size 0: zero-terminated
+IMGUI_NODE_EDITOR_API const char*     SaveSettingsToMemory(size_t* outSize = nullptr);           // zero-terminated, valid until the next call
+IMGUI_NODE_EDITOR_API bool            WantSaveSettings();                                        // settings changed, and io.IniSavingRate elapsed since
+IMGUI_NODE_EDITOR_API void            ClearWantSaveSettings();
+IMGUI_NODE_EDITOR_API SaveReasonFlags GetSettingsChangeReason();                                 // what changed since the last ClearWantSaveSettings()
+
 IMGUI_NODE_EDITOR_API Style& GetStyle();
 IMGUI_NODE_EDITOR_API const char* GetStyleColorName(StyleColor colorIndex);
 
@@ -337,169 +326,44 @@ IMGUI_NODE_EDITOR_API void PushStyleVar(StyleVar varIndex, const ImVec2& value);
 IMGUI_NODE_EDITOR_API void PushStyleVar(StyleVar varIndex, const ImVec4& value);
 IMGUI_NODE_EDITOR_API void PopStyleVar(int count = 1);
 
-// --- Frame ----------------------------------------------------------------
-// All node-editor calls (BeginNode, Link, BeginCreate, ...) must be made
-// between Begin() and End(), and Begin() must be called inside a real ImGui
-// window. `id` distinguishes editor instances inside the same window;
-// `size` matches ImGui::BeginChild semantics (0 = available).
+// Call inside a visible host window. While the host skips items (collapsed,
+// a hidden dock tab, a child window out of view) the editor measures nothing
+// and changes no state, so calling it then is harmless.
 IMGUI_NODE_EDITOR_API void Begin(const char* id, const ImVec2& size = ImVec2(0, 0));
 IMGUI_NODE_EDITOR_API void End();
 
-// --- Nodes & pins ---------------------------------------------------------
-// Inside Begin/End: declare each node with BeginNode(id) ... EndNode(),
-// and (optionally) declare its pins with BeginPin(id, kind) ... EndPin()
-// in between. Anything you draw between the Begin/End is rendered inside
-// the node; pins are typically wrapped around a Text/Button so the user
-// has something to grab onto.
+// Node, pin and link IDs are separate kinds, and 0 isn't valid for any of them.
+// Each node pushes an ImGui ID scope, so widgets in different nodes may share
+// labels. A pin ID can be submitted once per frame.
 IMGUI_NODE_EDITOR_API void BeginNode(NodeId id);
 IMGUI_NODE_EDITOR_API void BeginPin(PinId id, PinKind kind);
-
-// --- Pin geometry overrides (advanced) -----------------------------------
-// By default the pin's own item rectangle is used both as the hover area
-// and as the place where links attach (the "pivot"). Use these calls to
-// customize either independently, between BeginPin and EndPin.
-//
-//   PinRect(a, b)         : override the pin's hover/visual rectangle
-//                           (otherwise inferred from drawn content).
-//   PinPivotRect(a, b)    : override the rectangle used to compute where
-//                           a link attaches.
-//   PinPivotSize(size)    : set the pivot rect's size; -1 on a component
-//                           means "use the pin's size on that axis".
-//   PinPivotScale(scale)  : multiplicative scale applied to PivotSize.
-//   PinPivotAlignment(al) : where in the pin's rect the pivot is anchored;
-//                           (0,0)=top-left, (1,1)=bottom-right, (0.5,0.5)=center.
-//
-// You will rarely need these unless you draw custom-shaped pins (e.g. a
-// triangle whose tip should be the link attach point).
 IMGUI_NODE_EDITOR_API void PinRect(const ImVec2& a, const ImVec2& b);
 IMGUI_NODE_EDITOR_API void PinPivotRect(const ImVec2& a, const ImVec2& b);
 IMGUI_NODE_EDITOR_API void PinPivotSize(const ImVec2& size);
 IMGUI_NODE_EDITOR_API void PinPivotScale(const ImVec2& scale);
 IMGUI_NODE_EDITOR_API void PinPivotAlignment(const ImVec2& alignment);
 IMGUI_NODE_EDITOR_API void EndPin();
-
-// --- Group nodes ----------------------------------------------------------
-//
-// Calling Group(size) inside a BeginNode/EndNode block turns the node into a
-// "Group node": a tinted, resizable rectangle (StyleColor_GroupBg / GroupBorder)
-// that can act as a labeled container for other nodes.
-//
-// Behavior:
-//   - The user can resize the group by dragging its bottom-right corner.
-//   - Dragging the group drags every node whose bounds fall inside it
-//     (handled internally by the editor's DragAction).
-//   - `size` is only the INITIAL size, applied on the very first frame the
-//     group exists. Subsequent user resizes are persisted by the editor and
-//     override `size`. To resize a group programmatically afterwards, use
-//     SetGroupSize(node_id, size).
-//   - Anything drawn between BeginNode and Group(size) lands in the group's
-//     "title strip" above the colored rectangle: title text, buttons, and
-//     even pins via BeginPin/EndPin (useful for "summary" pins on a
-//     collapsed group).
-//
-// Minimal example (C++):
-//
-//     ed::BeginNode(groupId);
-//         ImGui::TextUnformatted("My Group");
-//         ed::Group(ImVec2(300, 200));   // initial size only
-//     ed::EndNode();
-//
-// Minimal example (Python):
-//
-//     ed.begin_node(group_id)
-//     imgui.text_unformatted("My Group")
-//     ed.group(imgui.ImVec2(300, 200))   # initial size only
-//     ed.end_node()
-//
-// To find the nodes contained in a group, use the editor's geometry getters
-// (no internal API needed): get the group's GetNodePosition / GetNodeSize,
-// then for each candidate node test whether its center sits inside the
-// group's rectangle.
-//
 IMGUI_NODE_EDITOR_API void Group(const ImVec2& size);
 IMGUI_NODE_EDITOR_API void EndNode();
 
-// --- Group hints ----------------------------------------------------------
-//
-// A "group hint" is overlay UI that the editor renders ONLY when zoomed out
-// far enough that the in-node title becomes hard to read. BeginGroupHint
-// returns false at normal zoom; it returns true and fades in below ~0.75x.
-// The intended use is to draw a large title above the group so users can
-// still identify it at low zoom.
-//
-// GetGroupMin / GetGroupMax return the targeted group's bounds in SCREEN
-// coordinates so you can position your overlay relative to it.
-// GetHintForegroundDrawList / GetHintBackgroundDrawList return draw lists
-// that sit above (foreground) and below (background) the editor's normal
-// content, so your overlay isn't clipped by the canvas.
-//
-// Minimal example (C++):
-//
-//     if (ed::BeginGroupHint(groupId))
-//     {
-//         ImVec2 min = ed::GetGroupMin();
-//         auto*  fg  = ed::GetHintForegroundDrawList();
-//         fg->AddText(ImVec2(min.x, min.y - 24.0f),
-//                     ImGui::GetColorU32(ImGuiCol_Text),
-//                     "My Group");
-//     }
-//     ed::EndGroupHint();
-//
-// Minimal example (Python):
-//
-//     if ed.begin_group_hint(group_id):
-//         min_ = ed.get_group_min()
-//         fg = ed.get_hint_foreground_draw_list()
-//         fg.add_text(imgui.ImVec2(min_.x, min_.y - 24.0),
-//                     imgui.get_color_u32(imgui.Col_.text.value),
-//                     "My Group")
-//     ed.end_group_hint()
-//
-IMGUI_NODE_EDITOR_API bool BeginGroupHint(NodeId nodeId);
+IMGUI_NODE_EDITOR_API bool BeginGroupHint(NodeId nodeId); // outside of BeginNode()/EndNode()
 IMGUI_NODE_EDITOR_API ImVec2 GetGroupMin();
 IMGUI_NODE_EDITOR_API ImVec2 GetGroupMax();
 IMGUI_NODE_EDITOR_API ImDrawList* GetHintForegroundDrawList();
 IMGUI_NODE_EDITOR_API ImDrawList* GetHintBackgroundDrawList();
 IMGUI_NODE_EDITOR_API void EndGroupHint();
 
-// Returns the draw list used for the node's BACKGROUND layer (drawn under
-// the node's content). Useful to add badges, highlights, etc. behind a node.
 // TODO: Add a way to manage node background channels
-IMGUI_NODE_EDITOR_API ImDrawList* GetNodeBackgroundDrawList(NodeId nodeId);
+IMGUI_NODE_EDITOR_API ImDrawList* GetNodeBackgroundDrawList(NodeId nodeId); // available after EndNode(); nullptr outside Begin()/End(), and for a node not submitted in this frame
 
-// Declares an existing link between two pins. Call once per frame for every
-// link you want shown. Returns true if the link is currently visible/active.
-// `color` default is the sentinel ImVec4(0,0,0,0) ("auto"): when alpha is 0
-// the implementation substitutes the current ImGuiCol_Text, so links stay
-// readable on both light and dark themes. Pass any non-zero-alpha color to
-// override.
-IMGUI_NODE_EDITOR_API bool Link(LinkId id, PinId startPinId, PinId endPinId, const ImVec4& color = ImVec4(0, 0, 0, 0), float thickness = 1.0f);
+IMGUI_NODE_EDITOR_API bool Link(LinkId id, PinId startPinId, PinId endPinId, const ImVec4& color = ImVec4(1, 1, 1, 1), float thickness = 1.0f);
 
-// Trigger a one-shot animated "flow" pulse along a link. Calling this once
-// is enough; the editor handles the time-bounded animation internally.
 IMGUI_NODE_EDITOR_API void Flow(LinkId linkId, FlowDirection direction = FlowDirection::Forward);
 
-// --- Item creation (drag-out new link / new node) ------------------------
-// Interaction protocol fired while the user drags a link from a pin:
-//
-//   if (BeginCreate()) {
-//       PinId a, b;
-//       if (QueryNewLink(&a, &b)) {     // user is hovering a candidate endpoint
-//           if (/* link a->b is invalid */)
-//               RejectNewItem();         // shows red feedback
-//           else if (AcceptNewItem())    // returns true on mouse-release
-//               /* commit the new link to your data model */;
-//       }
-//       if (QueryNewNode(&a)) {         // user dragged a link into empty space
-//           if (AcceptNewItem())         // -> typical UX: open a "Add node" popup
-//               /* spawn a new node and connect pin `a` to one of its pins */;
-//       }
-//   }
-//   EndCreate();
-//
-// The QueryNewLink/QueryNewNode/AcceptNewItem overloads taking a color and
-// thickness customize the in-progress link's drawing while the user drags.
-IMGUI_NODE_EDITOR_API bool BeginCreate(const ImVec4& color = ImVec4(0, 0, 0, 0), float thickness = 1.0f);
+// Call EndCreate(), EndDelete() and EndShortcut() only when the matching Begin
+// function returned true, as with Dear ImGui's BeginXXX()/EndXXX() pairs.
+IMGUI_NODE_EDITOR_API bool BeginCreate(const ImVec4& color = ImVec4(1, 1, 1, 1), float thickness = 1.0f);
+// startId is the pin the drag started from and endId the one it is over, of either kind.
 IMGUI_NODE_EDITOR_API bool QueryNewLink(PinId* startId, PinId* endId);
 IMGUI_NODE_EDITOR_API bool QueryNewLink(PinId* startId, PinId* endId, const ImVec4& color, float thickness = 1.0f);
 IMGUI_NODE_EDITOR_API bool QueryNewNode(PinId* pinId);
@@ -510,23 +374,11 @@ IMGUI_NODE_EDITOR_API void RejectNewItem();
 IMGUI_NODE_EDITOR_API void RejectNewItem(const ImVec4& color, float thickness = 1.0f);
 IMGUI_NODE_EDITOR_API void EndCreate();
 
-// --- Item deletion (Delete key, "Delete" context-menu, etc.) -------------
-// Interaction protocol that yields the things the user wants to delete this
-// frame. You decide whether to honor each one:
-//
-//   if (BeginDelete()) {
-//       LinkId l;
-//       while (QueryDeletedLink(&l))
-//           if (AcceptDeletedItem()) /* remove link from your model */;
-//       NodeId n;
-//       while (QueryDeletedNode(&n))
-//           if (AcceptDeletedItem()) /* remove node and its links */;
-//   }
-//   EndDelete();
-//
-// `deleteDependencies = true` (the default for AcceptDeletedItem) tells the
-// editor to also enqueue links touching the accepted node, so a subsequent
-// QueryDeletedLink call yields them too.
+// Links attached to a node deleted with its dependencies are deleted with it.
+// QueryDeletedLink() reports each of them, with the pins it connected: in the
+// same interaction when queried after the node, otherwise in one more
+// interaction in the next frame. They are already deleted: AcceptDeletedItem()
+// only acknowledges them, and RejectDeletedItem() asserts.
 IMGUI_NODE_EDITOR_API bool BeginDelete();
 IMGUI_NODE_EDITOR_API bool QueryDeletedLink(LinkId* linkId, PinId* startId = nullptr, PinId* endId = nullptr);
 IMGUI_NODE_EDITOR_API bool QueryDeletedNode(NodeId* nodeId);
@@ -534,53 +386,28 @@ IMGUI_NODE_EDITOR_API bool AcceptDeletedItem(bool deleteDependencies = true);
 IMGUI_NODE_EDITOR_API void RejectDeletedItem();
 IMGUI_NODE_EDITOR_API void EndDelete();
 
-// --- Node geometry --------------------------------------------------------
-// Positions and sizes are in EDITOR (canvas) space, not screen space. Use
-// CanvasToScreen / ScreenToCanvas to convert.
-// GetNodeSize returns (0,0) on the very first frame a node is drawn (the
-// editor has no measurement yet). It stabilizes immediately after.
-// CenterNodeOnScreen moves the node so it lands at the center of the view.
+// Nodes are kept inside the canvas border, 250000 from the origin.
 IMGUI_NODE_EDITOR_API void SetNodePosition(NodeId nodeId, const ImVec2& editorPosition);
 IMGUI_NODE_EDITOR_API void SetGroupSize(NodeId nodeId, const ImVec2& size);
 IMGUI_NODE_EDITOR_API ImVec2 GetNodePosition(NodeId nodeId);
 IMGUI_NODE_EDITOR_API ImVec2 GetNodeSize(NodeId nodeId);
 IMGUI_NODE_EDITOR_API void CenterNodeOnScreen(NodeId nodeId);
-IMGUI_NODE_EDITOR_API void SetNodeZPosition(NodeId nodeId, float z); // Sets node z position, nodes with higher value are drawn over nodes with lower value
+IMGUI_NODE_EDITOR_API void SetNodeZPosition(NodeId nodeId, float z); // Sets node z position, nodes with higher value are drawn over nodes with lower value; saved with the node's settings
 IMGUI_NODE_EDITOR_API float GetNodeZPosition(NodeId nodeId); // Returns node z position, defaults is 0.0f
 
-// Re-load the node's position/size from the editor's persisted settings
-// (the SettingsFile, if any). Useful right after creating a node whose
-// previous layout you want to bring back without the user having to drag it.
-IMGUI_NODE_EDITOR_API void RestoreNodeState(NodeId nodeId);
-
-// --- Suspend / Resume -----------------------------------------------------
-// Temporarily disable the editor's input/canvas state machine. You MUST
-// suspend before calling ImGui popup APIs like ImGui::OpenPopup or
-// ImGui::BeginPopup that should appear ABOVE the canvas (otherwise the
-// popup's coordinates and event capture will be wrong). Resume() restores
-// editor input handling. See the ShowNodeContextMenu example below.
+// Leaves the editor's canvas space, inside a node too. Begin popups, tooltips and
+// child windows between Suspend() and Resume(): the canvas doesn't transform them.
 IMGUI_NODE_EDITOR_API void Suspend();
 IMGUI_NODE_EDITOR_API void Resume();
 IMGUI_NODE_EDITOR_API bool IsSuspended();
 
-// True while the editor is processing user input this frame (drag, select,
-// pan, zoom, link-create, etc.).
-IMGUI_NODE_EDITOR_API bool IsActive();
+IMGUI_NODE_EDITOR_API bool IsFocused(); // Whether the window the editor is in had focus in Begin()
+IMGUI_NODE_EDITOR_API bool IsActive();  // Same as IsFocused()
 
-// --- Selection ------------------------------------------------------------
-// HasSelectionChanged returns true for one frame after the selection set
-// changed (use it to react to selection changes once, not every frame).
-// SelectNode/SelectLink with append=false replaces the current selection.
-IMGUI_NODE_EDITOR_API bool HasSelectionChanged();
+IMGUI_NODE_EDITOR_API bool HasSelectionChanged(); // Selection changed in the last frame, also when asked between Begin() and End()
 IMGUI_NODE_EDITOR_API int  GetSelectedObjectCount();
-#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 IMGUI_NODE_EDITOR_API int  GetSelectedNodes(NodeId* nodes, int size);
 IMGUI_NODE_EDITOR_API int  GetSelectedLinks(LinkId* links, int size);
-#endif
-#ifdef IMGUI_BUNDLE_PYTHON_API
-IMGUI_NODE_EDITOR_API std::vector<NodeId> GetSelectedNodes();
-IMGUI_NODE_EDITOR_API std::vector<LinkId> GetSelectedLinks();
-#endif
 IMGUI_NODE_EDITOR_API bool IsNodeSelected(NodeId nodeId);
 IMGUI_NODE_EDITOR_API bool IsLinkSelected(LinkId linkId);
 IMGUI_NODE_EDITOR_API void ClearSelection();
@@ -589,69 +416,64 @@ IMGUI_NODE_EDITOR_API void SelectLink(LinkId linkId, bool append = false);
 IMGUI_NODE_EDITOR_API void DeselectNode(NodeId nodeId);
 IMGUI_NODE_EDITOR_API void DeselectLink(LinkId linkId);
 
-// Programmatically queue a node/link for deletion. The next BeginDelete()
-// loop will yield it via QueryDeletedNode/QueryDeletedLink.
 IMGUI_NODE_EDITOR_API bool DeleteNode(NodeId nodeId);
 IMGUI_NODE_EDITOR_API bool DeleteLink(LinkId linkId);
 
+// Forgets the node, its pins, the links to them, its saved state and its selection.
+// A node submitted later with the same ID starts as a new one. Call it outside
+// Begin()/End().
+// Returns false if the editor doesn't know the node.
+IMGUI_NODE_EDITOR_API bool ForgetNode(NodeId nodeId);
+
+// Forgets all nodes, pins and links with their saved state, the selection, the view
+// and the edits not read yet, as for a new document. Call it outside Begin()/End().
+IMGUI_NODE_EDITOR_API void ClearState();
+
+// Typed state, for applications that keep node layout in their documents. The Set
+// functions return whether anything changed, and stop a drag or resize of the nodes
+// they change, putting those nodes back where the user found them.
+IMGUI_NODE_EDITOR_API bool      GetNodeState(NodeId nodeId, NodeState* state);  // false for a node the editor doesn't know
+IMGUI_NODE_EDITOR_API int       GetNodeStates(NodeState* states, int capacity); // known nodes by ID, also those only loaded; returns how many it wrote, or all of them for nullptr
+IMGUI_NODE_EDITOR_API bool      SetNodeState(const NodeState& state);           // false for state that isn't finite, and for a node being deleted; keeps the node inside the canvas border; a node the editor doesn't know starts with the state when submitted
+IMGUI_NODE_EDITOR_API bool      SetNodeStates(const NodeState* states, int count);
+IMGUI_NODE_EDITOR_API ViewState GetViewState();                                 // before the first visible frame, the view the editor will restore
+IMGUI_NODE_EDITOR_API bool      SetViewState(const ViewState& state, float duration = 0.0f); // keeps the zoom within the zoom levels
+IMGUI_NODE_EDITOR_API bool      SetSelection(const NodeId* nodes, int nodeCount, const LinkId* links, int linkCount); // skips unknown objects and objects being deleted; links only without nodes; before the first frame, also nodes not created yet
+
+// A node's state as text, in the format 0.9's Config::SaveNodeSettings gave, for
+// documents that keep node layout as text. The text has no node ID.
+IMGUI_NODE_EDITOR_API const char* FormatNodeState(const NodeState& state, size_t* outSize = nullptr); // zero-terminated, valid until the next call
+IMGUI_NODE_EDITOR_API bool        ParseNodeState(const char* data, size_t size, NodeState* state);   // also what 0.9 wrote; leaves state->Id alone; false for text that doesn't parse, changing nothing; size 0: zero-terminated
+
+// Edits the user completed in the last frame, in order: a drag or resize once it ends,
+// a selection change, and navigation once the view settles. Changes the application
+// makes aren't reported. Call EndEdits() only when BeginEdits() returned true, and
+// before End() when inside Begin()/End(). The edit's data stays valid until then.
+IMGUI_NODE_EDITOR_API bool BeginEdits();
+IMGUI_NODE_EDITOR_API bool QueryEdit(Edit* edit);
+IMGUI_NODE_EDITOR_API void EndEdits();
+
+// These see the links submitted so far: between Begin() and End(), call them after
+// the frame's links. PinHadAnyLinks() answers for the previous frame.
 IMGUI_NODE_EDITOR_API bool HasAnyLinks(NodeId nodeId); // Returns true if node has any link connected
 IMGUI_NODE_EDITOR_API bool HasAnyLinks(PinId pinId); // Return true if pin has any link connected
 IMGUI_NODE_EDITOR_API int BreakLinks(NodeId nodeId); // Break all links connected to this node
 IMGUI_NODE_EDITOR_API int BreakLinks(PinId pinId); // Break all links connected to this pin
 
-// --- Navigation -----------------------------------------------------------
-// Programmatic equivalents of pressing F (with no modifier and with Shift).
-// `duration` is the animation length in seconds; -1 means "use the editor
-// default". NavigateToSelection requires a non-empty selection.
 IMGUI_NODE_EDITOR_API void NavigateToContent(float duration = -1);
 IMGUI_NODE_EDITOR_API void NavigateToSelection(bool zoomIn = false, float duration = -1);
 
-// Shows context menu for node, link or background
-// Typical usage (this should happen inside ed::Begin/ed::End block):
-//        ed::Begin();
-//        ... (Show nodes)
-//        ed::Suspend();
-//        if (ed::ShowNodeContextMenu(&contextNodeId))
-//            ImGui::OpenPopup("Node Context Menu");
-//        ed::Resume();
-//        ...
-//        ed::Suspend();
-//        if (ImGui::BeginPopup("Node Context Menu"))
-//        {
-//            ImGui::Text("Node Context Menu, node ID: %d", contextNodeId);
-//            ImGui::EndPopup();
-//        }
-//        ed::Resume();
-//        ...
-//        ed::End();
 IMGUI_NODE_EDITOR_API bool ShowNodeContextMenu(NodeId* nodeId);
 IMGUI_NODE_EDITOR_API bool ShowPinContextMenu(PinId* pinId);
 IMGUI_NODE_EDITOR_API bool ShowLinkContextMenu(LinkId* linkId);
 IMGUI_NODE_EDITOR_API bool ShowBackgroundContextMenu();
 
-// --- Keyboard shortcuts ---------------------------------------------------
-// Master switch: when disabled the editor never reacts to F / Ctrl+X /
-// Ctrl+C / Ctrl+V / Ctrl+D / Space etc. Useful when an ImGui text input
-// has focus and you want shortcuts ignored.
+// The shortcuts don't fire while another ImGui item, such as a text field, is
+// active. With io.ConfigMacOSXBehaviors, Cmd takes Ctrl's place in them and in
+// Ctrl+click selection.
 IMGUI_NODE_EDITOR_API void EnableShortcuts(bool enable);
 IMGUI_NODE_EDITOR_API bool AreShortcutsEnabled();
 
-// --- Shortcut handling protocol ------------------------------------------
-// Lets you ASK the editor which keyboard shortcut fired this frame and
-// respond to it. Pattern (inside Begin/End):
-//
-//   if (BeginShortcut()) {
-//       if (AcceptCopy())       /* user pressed Ctrl+C: copy selection */;
-//       if (AcceptPaste())      /* user pressed Ctrl+V: paste at mouse */;
-//       if (AcceptCut())        /* user pressed Ctrl+X */;
-//       if (AcceptDuplicate())  /* user pressed Ctrl+D */;
-//       if (AcceptCreateNode()) /* user dragged a link out into empty space */;
-//   }
-//   EndShortcut();
-//
-// GetActionContextNodes / GetActionContextLinks return the objects the
-// shortcut applies to (typically the current selection at the moment the
-// shortcut fired). They are valid only between Begin/EndShortcut.
 IMGUI_NODE_EDITOR_API bool BeginShortcut();
 IMGUI_NODE_EDITOR_API bool AcceptCut();
 IMGUI_NODE_EDITOR_API bool AcceptCopy();
@@ -659,23 +481,13 @@ IMGUI_NODE_EDITOR_API bool AcceptPaste();
 IMGUI_NODE_EDITOR_API bool AcceptDuplicate();
 IMGUI_NODE_EDITOR_API bool AcceptCreateNode();
 IMGUI_NODE_EDITOR_API int  GetActionContextSize();
-#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 IMGUI_NODE_EDITOR_API int  GetActionContextNodes(NodeId* nodes, int size);
 IMGUI_NODE_EDITOR_API int  GetActionContextLinks(LinkId* links, int size);
-#endif
-#ifdef IMGUI_BUNDLE_PYTHON_API
-IMGUI_NODE_EDITOR_API std::vector<NodeId> GetActionContextNodes();
-IMGUI_NODE_EDITOR_API std::vector<LinkId> GetActionContextLinks();
-#endif
 IMGUI_NODE_EDITOR_API void EndShortcut();
 
-// Current canvas zoom factor; 1.0 = 100%.
+// Zoom factor of the view: 2 at 200%, as in Config::CustomZoomLevels.
 IMGUI_NODE_EDITOR_API float GetCurrentZoom();
 
-// --- Input queries (call between Begin and End) ---------------------------
-// These return the object under the mouse this frame (NodeId/PinId/LinkId,
-// 0 if none) and which buttons were clicked or double-clicked on the empty
-// background. The "BackgroundClick" pair returns -1 when no click happened.
 IMGUI_NODE_EDITOR_API NodeId GetHoveredNode();
 IMGUI_NODE_EDITOR_API PinId GetHoveredPin();
 IMGUI_NODE_EDITOR_API LinkId GetHoveredLink();
@@ -687,28 +499,17 @@ IMGUI_NODE_EDITOR_API bool IsBackgroundDoubleClicked();
 IMGUI_NODE_EDITOR_API ImGuiMouseButton GetBackgroundClickButtonIndex(); // -1 if none
 IMGUI_NODE_EDITOR_API ImGuiMouseButton GetBackgroundDoubleClickButtonIndex(); // -1 if none
 
-IMGUI_NODE_EDITOR_API bool GetLinkPins(LinkId linkId, PinId* startPinId, PinId* endPinId); // pass nullptr if particular pin do not interest you
+IMGUI_NODE_EDITOR_API bool GetLinkPins(LinkId linkId, PinId* startPinId, PinId* endPinId); // pass nullptr if particular pin do not interest you; false for an unknown link and a link whose pins were deleted
 
-// True if the pin was ever connected to a link in its lifetime, even if it
-// is currently disconnected.
-IMGUI_NODE_EDITOR_API bool PinHadAnyLinks(PinId pinId);
+IMGUI_NODE_EDITOR_API bool PinHadAnyLinks(PinId pinId); // Whether the pin had any link connected in the previous frame
 
-// --- Coordinate conversion ------------------------------------------------
-// SCREEN coords are pixels in the OS window. CANVAS coords are the editor's
-// virtual space (what GetNodePosition / SetNodePosition use). The two
-// differ by the current pan + zoom transform.
 IMGUI_NODE_EDITOR_API ImVec2 GetScreenSize();
 IMGUI_NODE_EDITOR_API ImVec2 ScreenToCanvas(const ImVec2& pos);
 IMGUI_NODE_EDITOR_API ImVec2 CanvasToScreen(const ImVec2& pos);
 
 IMGUI_NODE_EDITOR_API int GetNodeCount();                                // Returns number of submitted nodes since Begin() call
-#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
-IMGUI_NODE_EDITOR_API int GetOrderedNodeIds(NodeId* nodes, int size);    // Fills an array with node id's in order they're drawn; up to 'size` elements are set. Returns actual size of filled id's.
-#endif
-#ifdef IMGUI_BUNDLE_PYTHON_API
-// Fills an array with node id's in order they're drawn
-IMGUI_NODE_EDITOR_API std::vector<NodeId> GetOrderedNodeIds();
-#endif
+IMGUI_NODE_EDITOR_API int GetOrderedNodeIds(NodeId* nodes, int size);    // Fills an array with node id's in order they're drawn; up to 'size` elements are set. Returns actual size of filled id's, or the number of nodes when 'nodes' is null. Between Begin() and End(), only nodes submitted so far.
+
 
 
 
@@ -728,14 +529,6 @@ struct SafeType
 
     SafeType(const SafeType&) = default;
 
-    template <typename T2, typename Tag2>
-    SafeType(
-        const SafeType
-        <
-            typename std::enable_if<!std::is_same<T, T2>::value, T2>::type,
-            typename std::enable_if<!std::is_same<Tag, Tag2>::value, Tag2>::type
-        >&) = delete;
-
     SafeType& operator=(const SafeType&) = default;
 
     explicit operator T() const { return Get(); }
@@ -749,27 +542,21 @@ private:
 
 template <typename Tag>
 struct SafePointerType
-    : SafeType<uintptr_t, Tag>
+    : SafeType<std::uintptr_t, Tag>
 {
     static const Tag Invalid;
 
-    using SafeType<uintptr_t, Tag>::SafeType;
+    using SafeType<std::uintptr_t, Tag>::SafeType;
 
     SafePointerType()
         : SafePointerType(Invalid)
     {
     }
 
-    template <typename T = void> explicit SafePointerType(T* ptr): SafePointerType(reinterpret_cast<uintptr_t>(ptr)) {}
+    template <typename T = void> explicit SafePointerType(T* ptr): SafePointerType(reinterpret_cast<std::uintptr_t>(ptr)) {}
     template <typename T = void> T* AsPointer() const { return reinterpret_cast<T*>(this->Get()); }
 
     explicit operator bool() const { return *this != Invalid; }
-
-    // [ADAPT_IMGUI_BUNDLE]: needed for the map used by IsNodeGrowingIndefinitely
-    bool operator<(const SafePointerType& other) const
-    {
-        return this->Get() < other.Get();
-    }
 };
 
 template <typename Tag>
@@ -806,9 +593,47 @@ struct PinId final: Details::SafePointerType<PinId>
 
 
 //------------------------------------------------------------------------------
-} // namespace Editor
+struct NodeState
+{
+    NodeId Id;
+    ImVec2 Position;          // top left corner, in canvas coordinates
+    ImVec2 GroupSize;         // (0, 0) for a node that isn't a group
+    float  ZPosition = 0.0f;
+};
+
+// The visible part of the canvas, in canvas coordinates. The zoom follows from it
+// and the editor's size.
+struct ViewState
+{
+    ImVec2 VisibleMin;
+    ImVec2 VisibleMax;
+};
+
+struct SelectionState
+{
+    const NodeId* Nodes     = nullptr;
+    int           NodeCount = 0;
+    const LinkId* Links     = nullptr;
+    int           LinkCount = 0;
+};
+
+struct Edit
+{
+    EditType         Type = EditType::Move;
+    const NodeState* NodesBefore = nullptr; // Move and Resize: the nodes the edit changed, in the same order before and after it
+    const NodeState* NodesAfter  = nullptr;
+    int              NodeCount   = 0;
+    SelectionState   SelectionBefore;       // Select
+    SelectionState   SelectionAfter;
+    ViewState        ViewBefore;            // Navigate
+    ViewState        ViewAfter;
+};
+
+
+//------------------------------------------------------------------------------
+} // namespace NodeEditor
 } // namespace ax
 
 
 //------------------------------------------------------------------------------
-# endif // __IMGUI_NODE_EDITOR_H__
+# endif // IMGUI_NODE_EDITOR_H

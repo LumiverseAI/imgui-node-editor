@@ -1,17 +1,16 @@
 # pragma once
 # include "setup.h"
+# include <imgui.h>
 # include <memory>
 
 struct Platform;
-struct ImDrawData;
-struct ImVec4;
-using ImTextureID= void*;
 
 struct Renderer
 {
     virtual ~Renderer() {};
 
     virtual bool Create(Platform& platform) = 0;
+    // Does nothing unless Create() succeeded.
     virtual void Destroy() = 0;
 
     virtual void NewFrame() = 0;
@@ -22,9 +21,6 @@ struct Renderer
     virtual void Present() = 0;
 
     virtual void Resize(int width, int height) = 0;
-
-    virtual void InvalidateResources() = 0;
-    virtual void UpdateResources() = 0;
 
     virtual ImTextureID CreateTexture(const void* data, int width, int height) = 0;
     virtual void        DestroyTexture(ImTextureID texture) = 0;

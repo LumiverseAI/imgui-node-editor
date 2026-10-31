@@ -14,6 +14,7 @@
 # include <imgui.h>
 # include "imgui_impl_dx11.h"
 # include <d3d11.h>
+# include <cstdint> // std::uintptr_t
 
 
 struct RendererDX11 final
@@ -34,8 +35,6 @@ struct RendererDX11 final
     void Clear(const ImVec4& color) override;
     void Present() override;
     void Resize(int width, int height) override;
-    void InvalidateResources() override;
-    void UpdateResources() override;
 
     ImTextureID CreateTexture(const void* data, int width, int height) override;
     void        DestroyTexture(ImTextureID texture) override;
@@ -67,8 +66,6 @@ std::unique_ptr<Renderer> CreateRenderer()
 
 bool RendererDX11::Create(Platform& platform)
 {
-    m_Platform = &platform;
-
     auto hr = CreateDeviceD3D(reinterpret_cast<HWND>(platform.GetMainWindowHandle()));
     if (FAILED(hr))
         return false;
@@ -79,6 +76,7 @@ bool RendererDX11::Create(Platform& platform)
         return false;
     }
 
+    m_Platform = &platform;
     m_Platform->SetRenderer(this);
 
     return true;
@@ -123,16 +121,6 @@ void RendererDX11::Resize(int width, int height)
     CreateRenderTarget();
 }
 
-void RendererDX11::InvalidateResources()
-{
-    ImGui_ImplDX11_InvalidateDeviceObjects();
-}
-
-void RendererDX11::UpdateResources()
-{
-    ImGui_ImplDX11_CreateDeviceObjects();
-}
-
 HRESULT RendererDX11::CreateDeviceD3D(HWND hWnd)
 {
     // Setup swap chain
@@ -157,8 +145,11 @@ HRESULT RendererDX11::CreateDeviceD3D(HWND hWnd)
     UINT createDeviceFlags = 0;
     //createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
     D3D_FEATURE_LEVEL featureLevel;
-    const D3D_FEATURE_LEVEL featureLevelArray[1] = { D3D_FEATURE_LEVEL_11_0, };
-    if (D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 1, D3D11_SDK_VERSION, &sd, &m_swapChain, &m_device, &featureLevel, &m_deviceContext) != S_OK)
+    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
+    auto result = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_swapChain, &m_device, &featureLevel, &m_deviceContext);
+    if (result == DXGI_ERROR_UNSUPPORTED)
+        result = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_swapChain, &m_device, &featureLevel, &m_deviceContext);
+    if (result != S_OK)
         return E_FAIL;
 
     CreateRenderTarget();
@@ -210,12 +201,12 @@ ImTextureID RendererDX11::CreateTexture(const void* data, int width, int height)
     if (!UploadTexture(texture))
     {
         IM_DELETE(texture);
-        return nullptr;
+        return ImTextureID{};
     }
 
     m_textures.push_back(texture);
 
-    return static_cast<ImTextureID>(texture->View);
+    return reinterpret_cast<ImTextureID>(texture->View);
 }
 
 void RendererDX11::DestroyTexture(ImTextureID texture)
@@ -252,7 +243,7 @@ auto RendererDX11::FindTexture(ImTextureID texture) -> Texture*
     if (!texture)
         return nullptr;
 
-    auto textureView = static_cast<decltype(Texture::View)>(texture);
+    auto textureView = reinterpret_cast<decltype(Texture::View)>(static_cast<std::uintptr_t>(texture));
 
     for (auto& t : m_textures)
     {

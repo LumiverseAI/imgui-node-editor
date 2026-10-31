@@ -1,6 +1,4 @@
 //------------------------------------------------------------------------------
-// VERSION 0.9.1
-//
 // LICENSE
 //   This software is dual-licensed to the public domain and under the following
 //   license: you are granted a perpetual, irrevocable license to copy, modify,
@@ -9,8 +7,8 @@
 // CREDITS
 //   Written by Michal Cichon
 //------------------------------------------------------------------------------
-# ifndef __IMGUI_NODE_EDITOR_INTERNAL_INL__
-# define __IMGUI_NODE_EDITOR_INTERNAL_INL__
+# ifndef IMGUI_NODE_EDITOR_INTERNAL_INL
+# define IMGUI_NODE_EDITOR_INTERNAL_INL
 # pragma once
 
 
@@ -62,4 +60,4 @@ inline ImVec2 ImGui_GetMouseClickPos(ImGuiMouseButton buttonIndex)
 
 
 //------------------------------------------------------------------------------
-# endif // __IMGUI_NODE_EDITOR_INTERNAL_INL__
+# endif // IMGUI_NODE_EDITOR_INTERNAL_INL

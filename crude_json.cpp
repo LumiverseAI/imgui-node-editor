@@ -12,18 +12,48 @@
 # include "crude_json.h"
 # include <iomanip>
 # include <limits>
+# include <locale>
 # include <cstdlib>
-# include <clocale>
 # include <cmath>
 # include <cstring>
+# if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
+#     include <charconv>
+# endif
 # if CRUDE_JSON_IO
 #     include <stdio.h>
 #     include <memory>
+#     ifdef _WIN32
+#         ifndef WIN32_LEAN_AND_MEAN
+#             define WIN32_LEAN_AND_MEAN
+#         endif
+#         ifndef NOMINMAX
+#             define NOMINMAX
+#         endif
+#         include <windows.h>
+#     endif
 # endif
 
-namespace crude_json {
+namespace CRUDE_JSON_NAMESPACE {
 
-value::value(value&& other)
+// Numbers are converted independently of the global C and C++ locales.
+static bool parse_number(const string& text, number& result)
+{
+# if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+    const auto end = text.data() + text.size();
+    const auto converted = std::from_chars(text.data(), end, result);
+    return converted.ec == std::errc() && converted.ptr == end;
+# else
+    std::istringstream stream(text);
+    stream.imbue(std::locale::classic());
+    stream >> result;
+    // libc++ fails the extraction of a subnormal, on the range error from strtod(),
+    // and stores the converted value.
+    const auto subnormal = result != 0 && std::fabs(result) < std::numeric_limits<number>::min();
+    return (!stream.fail() || subnormal) && stream.eof();
+# endif
+}
+
+value::value(value&& other) noexcept
     : m_Type(other.m_Type)
 {
     switch (m_Type)
@@ -53,6 +83,21 @@ value::value(const value& other)
     }
 }
 
+// Const lookups that find nothing return this.
+static const value& null_value()
+{
+    static const value s_Null;
+    return s_Null;
+}
+
+// Mutable lookups that can't add to the document return this. Writes to it are lost.
+static value& scratch_value()
+{
+    static thread_local value s_Scratch;
+    s_Scratch = nullptr;
+    return s_Scratch;
+}
+
 value& value::operator[](size_t index)
 {
     if (is_null())
@@ -61,23 +106,29 @@ value& value::operator[](size_t index)
     if (is_array())
     {
         auto& v = *array_ptr(m_Storage);
-        if (index >= v.size())
-            v.insert(v.end(), index - v.size() + 1, value());
+        if (index < v.max_size())
+        {
+            if (index >= v.size())
+                v.insert(v.end(), index - v.size() + 1, value());
 
-        return v[index];
+            return v[index];
+        }
     }
 
-    CRUDE_ASSERT(false && "operator[] on unsupported type");
-    std::terminate();
+    CRUDE_ASSERT(false && "operator[] on unsupported type or index");
+    return scratch_value();
 }
 
 const value& value::operator[](size_t index) const
 {
     if (is_array())
-        return (*array_ptr(m_Storage))[index];
+    {
+        auto& v = *array_ptr(m_Storage);
+        if (index < v.size())
+            return v[index];
+    }
 
-    CRUDE_ASSERT(false && "operator[] on unsupported type");
-    std::terminate();
+    return null_value();
 }
 
 value& value::operator[](const string& key)
@@ -89,21 +140,30 @@ value& value::operator[](const string& key)
         return (*object_ptr(m_Storage))[key];
 
     CRUDE_ASSERT(false && "operator[] on unsupported type");
-    std::terminate();
+    return scratch_value();
 }
 
 const value& value::operator[](const string& key) const
 {
-    if (is_object())
-    {
-        auto& o = *object_ptr(m_Storage);
-        auto it = o.find(key);
-        CRUDE_ASSERT(it != o.end());
-        return it->second;
-    }
+    if (auto entry = find(key))
+        return *entry;
 
-    CRUDE_ASSERT(false && "operator[] on unsupported type");
-    std::terminate();
+    return null_value();
+}
+
+value* value::find(const string& key)
+{
+    return const_cast<value*>(static_cast<const value*>(this)->find(key));
+}
+
+const value* value::find(const string& key) const
+{
+    if (!is_object())
+        return nullptr;
+
+    auto& o = *object_ptr(m_Storage);
+    auto it = o.find(key);
+    return it != o.end() ? &it->second : nullptr;
 }
 
 bool value::contains(const string& key) const
@@ -168,7 +228,7 @@ size_t value::erase(const string& key)
     return 1;
 }
 
-void value::swap(value& other)
+void value::swap(value& other) noexcept
 {
     using std::swap;
 
@@ -198,7 +258,8 @@ string value::dump(const int indent, const char indent_char) const
 {
     dump_context_t context(indent, indent_char);
 
-    context.out.precision(std::numeric_limits<double>::max_digits10 + 1);
+    context.out.imbue(std::locale::classic());
+    context.out.precision(std::numeric_limits<double>::max_digits10);
     context.out << std::defaultfloat;
 
     dump(context, 0);
@@ -232,6 +293,33 @@ void value::dump_context_t::write_newline()
     out.put('\n');
 }
 
+static void write_string(std::ostream& out, const string& text)
+{
+    static const char hex_digits[] = "0123456789abcdef";
+
+    out << '\"';
+    for (const auto c : text)
+    {
+        switch (c)
+        {
+            case '\"': out << "\\\""; break;
+            case '\\': out << "\\\\"; break;
+            case '\b': out << "\\b";  break;
+            case '\f': out << "\\f";  break;
+            case '\n': out << "\\n";  break;
+            case '\r': out << "\\r";  break;
+            case '\t': out << "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20)
+                    out << "\\u00" << hex_digits[c >> 4] << hex_digits[c & 0xF];
+                else
+                    out << c;
+                break;
+        }
+    }
+    out << '\"';
+}
+
 void value::dump(dump_context_t& context, int level) const
 {
     context.write_indent(level);
@@ -251,7 +339,8 @@ void value::dump(dump_context_t& context, int level) const
                 {
                     if (!first) { context.out << ','; context.write_newline(); } else first = false;
                     context.write_indent(level + 1);
-                    context.out << '\"' << entry.first << "\":";
+                    write_string(context.out, entry.first);
+                    context.out << ':';
                     if (!entry.second.is_structured())
                     {
                         context.write_separator();
@@ -296,27 +385,7 @@ void value::dump(dump_context_t& context, int level) const
             break;
 
         case type_t::string:
-            context.out << '\"';
-
-            if (string_ptr(m_Storage)->find_first_of("\"\\/\b\f\n\r") != string::npos || string_ptr(m_Storage)->find('\0') != string::npos)
-            {
-                for (auto c : *string_ptr(m_Storage))
-                {
-                         if (c == '\"')  context.out << "\\\"";
-                    else if (c == '\\')  context.out << "\\\\";
-                    else if (c == '/')   context.out << "\\/";
-                    else if (c == '\b')  context.out << "\\b";
-                    else if (c == '\f')  context.out << "\\f";
-                    else if (c == '\n')  context.out << "\\n";
-                    else if (c == '\r')  context.out << "\\r";
-                    else if (c == '\t')  context.out << "\\t";
-                    else if (c == 0)     context.out << "\\u0000";
-                    else                 context.out << c;
-                }
-            }
-            else
-                context.out << *string_ptr(m_Storage);
-            context.out << '\"';
+            write_string(context.out, *string_ptr(m_Storage));
             break;
 
 
@@ -328,11 +397,41 @@ void value::dump(dump_context_t& context, int level) const
             break;
 
         case type_t::number:
-            context.out << *number_ptr(m_Storage);
+            // JSON has no NaN and no infinity.
+            if (std::isfinite(*number_ptr(m_Storage)))
+                context.out << *number_ptr(m_Storage);
+            else
+                context.out << "null";
             break;
 
         default:
             break;
+    }
+}
+
+static void append_utf8(string& result, unsigned long code_point)
+{
+    if (code_point < 0x80)
+    {
+        result.push_back(static_cast<char>(code_point));
+    }
+    else if (code_point < 0x800)
+    {
+        result.push_back(static_cast<char>(0xC0 | (code_point >> 6)));
+        result.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+    }
+    else if (code_point < 0x10000)
+    {
+        result.push_back(static_cast<char>(0xE0 | (code_point >> 12)));
+        result.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3F)));
+        result.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
+    }
+    else
+    {
+        result.push_back(static_cast<char>(0xF0 | (code_point >> 18)));
+        result.push_back(static_cast<char>(0x80 | ((code_point >> 12) & 0x3F)));
+        result.push_back(static_cast<char>(0x80 | ((code_point >> 6) & 0x3F)));
+        result.push_back(static_cast<char>(0x80 | (code_point & 0x3F)));
     }
 }
 
@@ -348,15 +447,9 @@ struct value::parser
     {
         value v;
 
-        // Switch to C locale to make strtod and strtol work as expected
-        auto previous_locale = std::setlocale(LC_NUMERIC, "C");
-
         // Accept single value only when end of the stream is reached.
         if (!accept_element(v) || !eof())
             v = value(type_t::discarded);
-
-        if (previous_locale && strcmp(previous_locale, "C") != 0)
-            std::setlocale(LC_NUMERIC, previous_locale);
 
         return v;
     }
@@ -396,9 +489,18 @@ private:
 
     bool accept_value(value& result)
     {
-        return accept_object(result)
-            || accept_array(result)
-            || accept_string(result)
+        if (peek() == '{' || peek() == '[')
+        {
+            if (m_Depth >= CRUDE_JSON_MAX_DEPTH)
+                return false;
+
+            ++m_Depth;
+            const auto accepted = peek() == '{' ? accept_object(result) : accept_array(result);
+            --m_Depth;
+            return accepted;
+        }
+
+        return accept_string(result)
             || accept_number(result)
             || accept_boolean(result)
             || accept_null(result);
@@ -512,60 +614,65 @@ private:
             return false;
     }
 
+    // Bytes other than escapes are taken as they are, so UTF-8 text stays UTF-8.
     bool accept_characters(string& result)
     {
-        int c;
-        while (accept_character(c))
+        while (!eof() && !expect('\"'))
         {
-            CRUDE_ASSERT(c < 128); // #todo: convert characters > 127 to UTF-8
-            result.push_back(static_cast<char>(c));
+            if (accept('\\'))
+            {
+                if (!accept_escape(result))
+                    return false;
+            }
+            else
+            {
+                result.push_back(static_cast<char>(peek()));
+                advance();
+            }
         }
 
         return true;
     }
 
-    bool accept_character(int& c)
+    bool accept_escape(string& result)
     {
-        auto s = state();
+        if (accept('\"')) { result.push_back('\"'); return true; }
+        if (accept('\\')) { result.push_back('\\'); return true; }
+        if (accept('/'))  { result.push_back('/');  return true; }
+        if (accept('b'))  { result.push_back('\b'); return true; }
+        if (accept('f'))  { result.push_back('\f'); return true; }
+        if (accept('n'))  { result.push_back('\n'); return true; }
+        if (accept('r'))  { result.push_back('\r'); return true; }
+        if (accept('t'))  { result.push_back('\t'); return true; }
 
-        if (accept('\\'))
-        {
-            return accept_escape(c);
-        }
-        else if (expect('\"'))
+        unsigned long code_point = 0;
+        if (!accept('u') || !accept_code_unit(code_point))
             return false;
 
-        // #todo: Handle UTF-8 sequences.
-        return s((c = peek()) >= 0) && advance();
-    }
-
-    bool accept_escape(int& c)
-    {
-        if (accept('\"')) { c = '\"'; return true; }
-        if (accept('\\')) { c = '\\'; return true; }
-        if (accept('/'))  { c = '/';  return true; }
-        if (accept('b'))  { c = '\b'; return true; }
-        if (accept('f'))  { c = '\f'; return true; }
-        if (accept('n'))  { c = '\n'; return true; }
-        if (accept('r'))  { c = '\r'; return true; }
-        if (accept('t'))  { c = '\t'; return true; }
-
-        auto s = state();
-
-        string hex;
-        hex.reserve(4);
-        if (s(accept('u') && accept_hex(hex) && accept_hex(hex) && accept_hex(hex) && accept_hex(hex)))
+        // A UTF-16 surrogate pair escapes a code point above 0xFFFF.
+        if (code_point >= 0xDC00 && code_point <= 0xDFFF)
+            return false;
+        if (code_point >= 0xD800 && code_point <= 0xDBFF)
         {
-            char* end = nullptr;
-            auto v = std::strtol(hex.c_str(), &end, 16);
-            if (end != hex.c_str() + hex.size())
+            unsigned long low = 0;
+            if (!accept('\\') || !accept('u') || !accept_code_unit(low) || low < 0xDC00 || low > 0xDFFF)
                 return false;
-
-            c = static_cast<int>(v);
-            return true;
+            code_point = 0x10000 + ((code_point - 0xD800) << 10) + (low - 0xDC00);
         }
 
-        return false;
+        append_utf8(result, code_point);
+        return true;
+    }
+
+    bool accept_code_unit(unsigned long& result)
+    {
+        string hex;
+        hex.reserve(4);
+        if (!(accept_hex(hex) && accept_hex(hex) && accept_hex(hex) && accept_hex(hex)))
+            return false;
+
+        result = std::strtoul(hex.c_str(), nullptr, 16);
+        return true;
     }
 
     bool accept_hex(string& result)
@@ -589,21 +696,15 @@ private:
         auto s = state();
 
         string n;
-        if (s(accept_int(n) && accept_frac(n) && accept_exp(n)))
+        number v = 0;
+        if (!(accept_int(n) && accept_frac(n) && accept_exp(n)) || !parse_number(n, v) || !std::isfinite(v))
         {
-            char* end = nullptr;
-            auto v = std::strtod(n.c_str(), &end);
-            if (end != n.c_str() + n.size())
-                return false;
-
-            if (v != 0 && !std::isnormal(v))
-                return false;
-
-            result = v;
-            return true;
+            s.reset();
+            return false;
         }
 
-        return false;
+        result = v;
+        return true;
     }
 
     bool accept_int(string& result)
@@ -791,7 +892,7 @@ private:
     int peek() const
     {
         if (!eof())
-            return *m_Cursor;
+            return static_cast<unsigned char>(*m_Cursor);
         else
             return -1;
     }
@@ -821,6 +922,7 @@ private:
 
     const char* m_Cursor;
     const char* m_End;
+    int         m_Depth = 0;
 };
 
 value value::parse(const string& data)
@@ -833,58 +935,103 @@ value value::parse(const string& data)
 }
 
 # if CRUDE_JSON_IO
+# ifdef _WIN32
+// Empty when the text isn't valid UTF-8.
+static std::wstring widen(const string& text)
+{
+    const auto length = static_cast<int>(text.size());
+    const auto size   = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), length, nullptr, 0);
+    std::wstring result(size > 0 ? static_cast<size_t>(size) : 0, L'\0');
+    if (size > 0)
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), length, &result[0], size);
+    return result;
+}
+# endif
+
+static FILE* open_file(const string& path, const char* mode)
+{
+    FILE* file = nullptr;
+# if defined(_WIN32)
+    const auto wide_path = widen(path);
+    if (wide_path.empty())
+        return nullptr;
+#     if defined(_MSC_VER)
+    if (_wfopen_s(&file, wide_path.c_str(), widen(mode).c_str()) != 0)
+        return nullptr;
+#     else
+    file = _wfopen(wide_path.c_str(), widen(mode).c_str());
+#     endif
+# elif defined(__STDC_LIB_EXT1__) && __STDC_WANT_LIB_EXT1__
+    if (fopen_s(&file, path.c_str(), mode) != 0)
+        return nullptr;
+# else
+    file = fopen(path.c_str(), mode);
+# endif
+    return file;
+}
+
+// Replaces 'to' when it exists.
+static bool replace_file(const string& from, const string& to)
+{
+# if defined(_WIN32)
+    const auto wide_from = widen(from);
+    const auto wide_to   = widen(to);
+    return !wide_from.empty() && !wide_to.empty()
+        && MoveFileExW(wide_from.c_str(), wide_to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+# else
+    return rename(from.c_str(), to.c_str()) == 0;
+# endif
+}
+
+static void remove_file(const string& path)
+{
+# if defined(_WIN32)
+    DeleteFileW(widen(path).c_str());
+# else
+    remove(path.c_str());
+# endif
+}
+
 std::pair<value, bool> value::load(const string& path)
 {
     // Modern C++, so beautiful...
-    std::unique_ptr<FILE, void(*)(FILE*)> file{nullptr, [](FILE* file) { if (file) fclose(file); }};
-# if defined(_MSC_VER) || (defined(__STDC_LIB_EXT1__) && __STDC_WANT_LIB_EXT1__)
-    FILE* handle = nullptr;
-    if (fopen_s(&handle, path.c_str(), "rb") != 0)
-        return {value{}, false};
-    file.reset(handle);
-# else
-    file.reset(fopen(path.c_str(), "rb"));
-# endif
-
+    std::unique_ptr<FILE, void(*)(FILE*)> file{open_file(path, "rb"), [](FILE* file) { if (file) fclose(file); }};
     if (!file)
         return {value{}, false};
 
-    fseek(file.get(), 0, SEEK_END);
-    auto size = static_cast<size_t>(ftell(file.get()));
-    fseek(file.get(), 0, SEEK_SET);
-
     string data;
-    data.resize(size);
-    if (fread(const_cast<char*>(data.data()), size, 1, file.get()) != 1)
+    char buffer[4096];
+    while (const auto size = fread(buffer, 1, sizeof(buffer), file.get()))
+        data.append(buffer, size);
+    if (ferror(file.get()))
         return {value{}, false};
 
-    return {parse(data), true};
+    const char byte_order_mark[] = "\xEF\xBB\xBF";
+    const auto start = data.compare(0, 3, byte_order_mark) == 0 ? 3 : 0;
+    auto p = parser(data.c_str() + start, data.c_str() + data.size());
+    return {p.parse(), true};
 }
 
 bool value::save(const string& path, const int indent, const char indent_char) const
 {
-    // Modern C++, so beautiful...
-    std::unique_ptr<FILE, void(*)(FILE*)> file{nullptr, [](FILE* file) { if (file) fclose(file); }};
-# if defined(_MSC_VER) || (defined(__STDC_LIB_EXT1__) && __STDC_WANT_LIB_EXT1__)
-    FILE* handle = nullptr;
-    if (fopen_s(&handle, path.c_str(), "wb") != 0)
-        return false;
-    file.reset(handle);
-# else
-    file.reset(fopen(path.c_str(), "wb"));
-# endif
+    const auto data      = dump(indent, indent_char);
+    const auto temp_path = path + ".tmp";
 
+    auto file = open_file(temp_path, "wb");
     if (!file)
         return false;
 
-    auto data = dump(indent, indent_char);
-
-    if (fwrite(data.data(), data.size(), 1, file.get()) != 1)
+    const auto written = fwrite(data.data(), 1, data.size(), file) == data.size();
+    const auto closed  = fclose(file) == 0;
+    if (!written || !closed || !replace_file(temp_path, path))
+    {
+        remove_file(temp_path);
         return false;
+    }
 
     return true;
 }
 
 # endif
 
-} // namespace crude_json
+} // namespace CRUDE_JSON_NAMESPACE

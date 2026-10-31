@@ -34,14 +34,14 @@ struct Application
 
     virtual void OnStart() {}
     virtual void OnStop() {}
-    virtual void OnFrame(float deltaTime) {}
+    virtual void OnFrame(float deltaTime) { IM_UNUSED(deltaTime); }
 
     virtual ImGuiWindowFlags GetWindowFlags() const;
 
     virtual bool CanClose() { return true; }
 
 private:
-    void RecreateFontAtlas();
+    void LoadFonts();
 
     void Frame();
 
@@ -52,6 +52,7 @@ private:
     ImGuiContext*               m_Context = nullptr;
     ImFont*                     m_DefaultFont = nullptr;
     ImFont*                     m_HeaderFont = nullptr;
+    void                      (*m_SetImeData)(ImGuiContext*, ImGuiViewport*, ImGuiPlatformImeData*) = nullptr;
 };
 
 int Main(int argc, char** argv);

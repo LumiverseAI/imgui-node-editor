@@ -11,9 +11,8 @@ struct Example:
 
     void OnStart() override
     {
-        ed::Config config;
-        config.SettingsFile = "Simple.json";
-        m_Context = ed::CreateEditor(&config);
+        ed::InstallSettingsHandler();
+        m_Context = ed::CreateEditor();
     }
 
     void OnStop() override
@@ -23,6 +22,8 @@ struct Example:
 
     void OnFrame(float deltaTime) override
     {
+        IM_UNUSED(deltaTime);
+
         auto& io = ImGui::GetIO();
 
         ImGui::Text("FPS: %.2f (%.2gms)", io.Framerate, io.Framerate ? 1000.0f / io.Framerate : 0.0f);
@@ -54,10 +55,10 @@ struct Example:
 
 int Main(int argc, char** argv)
 {
-    Example exampe("Simple", argc, argv);
+    Example example("Simple", argc, argv);
 
-    if (exampe.Create())
-        return exampe.Run();
+    if (example.Create())
+        return example.Run();
 
-    return 0;
+    return 1;
 }

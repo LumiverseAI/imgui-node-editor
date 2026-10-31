@@ -9,8 +9,6 @@
 //
 // CREDITS
 //   Written by Michal Cichon
-# ifndef __CRUDE_JSON_H__
-# define __CRUDE_JSON_H__
 # pragma once
 
 # include <type_traits>
@@ -18,7 +16,7 @@
 # include <vector>
 # include <map>
 # include <cstddef>
-# include <algorithm>
+# include <new>
 # include <sstream>
 
 # ifndef CRUDE_ASSERT
@@ -30,7 +28,19 @@
 #     define CRUDE_JSON_IO 1
 # endif
 
-namespace crude_json {
+// parse() rejects documents nested deeper. Values built in code may nest deeper, but
+// dump(), copies and destruction recurse as well, so keep them shallow too.
+# ifndef CRUDE_JSON_MAX_DEPTH
+#     define CRUDE_JSON_MAX_DEPTH 512
+# endif
+
+// A program with another copy of crude_json can build this one into a namespace of its
+// own, for the two to link together.
+# ifndef CRUDE_JSON_NAMESPACE
+#     define CRUDE_JSON_NAMESPACE crude_json
+# endif
+
+namespace CRUDE_JSON_NAMESPACE {
 
 struct value;
 
@@ -54,8 +64,16 @@ enum class type_t
 
 struct value
 {
+private:
+    template <typename T>
+    using if_integer = typename std::enable_if<std::is_integral<T>::value && !std::is_same<T, boolean>::value, int>::type;
+    template <typename T>
+    using if_not_char = typename std::enable_if<!std::is_same<typename std::remove_cv<T>::type, char>::value, int>::type;
+
+public:
     value(type_t type = type_t::null): m_Type(construct(m_Storage, type)) {}
-    value(value&& other);
+    // MSVC's std::map allocates when moved; running out of memory there terminates.
+    value(value&& other) noexcept;
     value(const value& other);
 
     value(      null)      : m_Type(construct(m_Storage,      null()))  {}
@@ -68,10 +86,15 @@ struct value
     value(const char*    v): m_Type(construct(m_Storage,           v))  {}
     value(      boolean  v): m_Type(construct(m_Storage,           v))  {}
     value(      number   v): m_Type(construct(m_Storage,           v))  {}
+    // Integers are stored as numbers, exact up to 2^53.
+    template <typename T, if_integer<T> = 0>
+    value(      T        v): m_Type(construct(m_Storage, static_cast<number>(v))) {}
+    template <typename T, if_not_char<T> = 0>
+    value(      T*        ) = delete;
     ~value() { destruct(m_Storage, m_Type); }
 
-    value& operator=(value&& other)      { if (this != &other) { value(std::move(other)).swap(*this); } return *this; }
-    value& operator=(const value& other) { if (this != &other) { value(          other).swap(*this);  } return *this; }
+    value& operator=(value&& other) noexcept { if (this != &other) { value(std::move(other)).swap(*this); } return *this; }
+    value& operator=(const value& other)     { if (this != &other) { value(          other).swap(*this);  } return *this; }
 
     value& operator=(      null)       { auto other = value(           );  swap(other); return *this; }
     value& operator=(      object&& v) { auto other = value(std::move(v)); swap(other); return *this; }
@@ -83,15 +106,26 @@ struct value
     value& operator=(const char*    v) { auto other = value(          v);  swap(other); return *this; }
     value& operator=(      boolean  v) { auto other = value(          v);  swap(other); return *this; }
     value& operator=(      number   v) { auto other = value(          v);  swap(other); return *this; }
+    template <typename T, if_integer<T> = 0>
+    value& operator=(      T        v) { auto other = value(          v);  swap(other); return *this; }
+    template <typename T, if_not_char<T> = 0>
+    value& operator=(      T*        ) = delete;
 
     type_t type() const { return m_Type; }
 
-    operator type_t() const { return m_Type; }
+    explicit operator type_t() const { return m_Type; }
 
+    // Mutable lookups add missing entries, turning null into an array or an object;
+    // on another type they assert and return a value that isn't in the document.
+    // Const lookups return null for a missing entry or another type.
           value& operator[](size_t index);
     const value& operator[](size_t index) const;
           value& operator[](const string& key);
     const value& operator[](const string& key) const;
+
+    // Returns nullptr for a missing key, or when this isn't an object.
+          value* find(const string& key);
+    const value* find(const string& key) const;
 
     bool contains(const string& key) const;
 
@@ -110,6 +144,7 @@ struct value
     bool is_number()     const { return m_Type == type_t::number;    }
     bool is_discarded()  const { return m_Type == type_t::discarded; }
 
+    // On another type, get() asserts and returns an empty value; writes to it are lost.
     template <typename T> const T& get() const;
     template <typename T>       T& get();
 
@@ -118,14 +153,18 @@ struct value
 
     string dump(const int indent = -1, const char indent_char = ' ') const;
 
-    void swap(value& other);
+    void swap(value& other) noexcept;
 
-    inline friend void swap(value& lhs, value& rhs) { lhs.swap(rhs); }
+    inline friend void swap(value& lhs, value& rhs) noexcept { lhs.swap(rhs); }
 
-    // Returns discarded value for invalid inputs.
+    // Returns discarded value for invalid inputs. An object that repeats a key keeps the
+    // value of its first occurrence.
     static value parse(const string& data);
 
 # if CRUDE_JSON_IO
+    // Paths are UTF-8, on Windows as well.
+    // load() returns false when the file can't be read; a file that isn't JSON loads as a discarded value.
+    // save() writes path + ".tmp", and renames it over the file.
     static std::pair<value, bool> load(const string& path);
     bool save(const string& path, const int indent = -1, const char indent_char = ' ') const;
 # endif
@@ -149,16 +188,27 @@ private:
 # undef CRUDE_MAX2
     struct storage_t { alignas(max_align) unsigned char data[max_size]; };
 
-    static       object*   object_ptr(      storage_t& storage) { return reinterpret_cast<       object*>(storage.data); }
-    static const object*   object_ptr(const storage_t& storage) { return reinterpret_cast<const  object*>(storage.data); }
-    static       array*     array_ptr(      storage_t& storage) { return reinterpret_cast<        array*>(storage.data); }
-    static const array*     array_ptr(const storage_t& storage) { return reinterpret_cast<const   array*>(storage.data); }
-    static       string*   string_ptr(      storage_t& storage) { return reinterpret_cast<       string*>(storage.data); }
-    static const string*   string_ptr(const storage_t& storage) { return reinterpret_cast<const  string*>(storage.data); }
-    static       boolean* boolean_ptr(      storage_t& storage) { return reinterpret_cast<      boolean*>(storage.data); }
-    static const boolean* boolean_ptr(const storage_t& storage) { return reinterpret_cast<const boolean*>(storage.data); }
-    static       number*   number_ptr(      storage_t& storage) { return reinterpret_cast<       number*>(storage.data); }
-    static const number*   number_ptr(const storage_t& storage) { return reinterpret_cast<const  number*>(storage.data); }
+    // A value lives in the storage, made there by placement new, and from C++17 a
+    // pointer to it made from the storage's address needs std::launder().
+# if defined(__cpp_lib_launder)
+    template <typename T> static T* launder(T* pointer) { return std::launder(pointer); }
+# else
+    template <typename T> static T* launder(T* pointer) { return pointer; }
+# endif
+
+    static       object*   object_ptr(      storage_t& storage) { return launder(reinterpret_cast<       object*>(storage.data)); }
+    static const object*   object_ptr(const storage_t& storage) { return launder(reinterpret_cast<const  object*>(storage.data)); }
+    static       array*     array_ptr(      storage_t& storage) { return launder(reinterpret_cast<        array*>(storage.data)); }
+    static const array*     array_ptr(const storage_t& storage) { return launder(reinterpret_cast<const   array*>(storage.data)); }
+    static       string*   string_ptr(      storage_t& storage) { return launder(reinterpret_cast<       string*>(storage.data)); }
+    static const string*   string_ptr(const storage_t& storage) { return launder(reinterpret_cast<const  string*>(storage.data)); }
+    static       boolean* boolean_ptr(      storage_t& storage) { return launder(reinterpret_cast<      boolean*>(storage.data)); }
+    static const boolean* boolean_ptr(const storage_t& storage) { return launder(reinterpret_cast<const boolean*>(storage.data)); }
+    static       number*   number_ptr(      storage_t& storage) { return launder(reinterpret_cast<       number*>(storage.data)); }
+    static const number*   number_ptr(const storage_t& storage) { return launder(reinterpret_cast<const  number*>(storage.data)); }
+
+    template <typename T> static const T& empty()   { static const T s_Empty{}; return s_Empty; }
+    template <typename T> static       T& scratch() { static thread_local T s_Scratch; s_Scratch = T(); return s_Scratch; }
 
     static type_t construct(storage_t& storage, type_t type)
     {
@@ -221,17 +271,17 @@ private:
     type_t    m_Type;
 };
 
-template <> inline const object&  value::get<object>()  const { CRUDE_ASSERT(m_Type == type_t::object);  return *object_ptr(m_Storage);  }
-template <> inline const array&   value::get<array>()   const { CRUDE_ASSERT(m_Type == type_t::array);   return *array_ptr(m_Storage);   }
-template <> inline const string&  value::get<string>()  const { CRUDE_ASSERT(m_Type == type_t::string);  return *string_ptr(m_Storage);  }
-template <> inline const boolean& value::get<boolean>() const { CRUDE_ASSERT(m_Type == type_t::boolean); return *boolean_ptr(m_Storage); }
-template <> inline const number&  value::get<number>()  const { CRUDE_ASSERT(m_Type == type_t::number);  return *number_ptr(m_Storage);  }
+template <> inline const object&  value::get<object>()  const { CRUDE_ASSERT(m_Type == type_t::object);  return m_Type == type_t::object  ? *object_ptr(m_Storage)  : empty<object>();    }
+template <> inline const array&   value::get<array>()   const { CRUDE_ASSERT(m_Type == type_t::array);   return m_Type == type_t::array   ? *array_ptr(m_Storage)   : empty<array>();     }
+template <> inline const string&  value::get<string>()  const { CRUDE_ASSERT(m_Type == type_t::string);  return m_Type == type_t::string  ? *string_ptr(m_Storage)  : empty<string>();    }
+template <> inline const boolean& value::get<boolean>() const { CRUDE_ASSERT(m_Type == type_t::boolean); return m_Type == type_t::boolean ? *boolean_ptr(m_Storage) : empty<boolean>();   }
+template <> inline const number&  value::get<number>()  const { CRUDE_ASSERT(m_Type == type_t::number);  return m_Type == type_t::number  ? *number_ptr(m_Storage)  : empty<number>();    }
 
-template <> inline       object&  value::get<object>()        { CRUDE_ASSERT(m_Type == type_t::object);  return *object_ptr(m_Storage);  }
-template <> inline       array&   value::get<array>()         { CRUDE_ASSERT(m_Type == type_t::array);   return *array_ptr(m_Storage);   }
-template <> inline       string&  value::get<string>()        { CRUDE_ASSERT(m_Type == type_t::string);  return *string_ptr(m_Storage);  }
-template <> inline       boolean& value::get<boolean>()       { CRUDE_ASSERT(m_Type == type_t::boolean); return *boolean_ptr(m_Storage); }
-template <> inline       number&  value::get<number>()        { CRUDE_ASSERT(m_Type == type_t::number);  return *number_ptr(m_Storage);  }
+template <> inline       object&  value::get<object>()        { CRUDE_ASSERT(m_Type == type_t::object);  return m_Type == type_t::object  ? *object_ptr(m_Storage)  : scratch<object>();  }
+template <> inline       array&   value::get<array>()         { CRUDE_ASSERT(m_Type == type_t::array);   return m_Type == type_t::array   ? *array_ptr(m_Storage)   : scratch<array>();   }
+template <> inline       string&  value::get<string>()        { CRUDE_ASSERT(m_Type == type_t::string);  return m_Type == type_t::string  ? *string_ptr(m_Storage)  : scratch<string>();  }
+template <> inline       boolean& value::get<boolean>()       { CRUDE_ASSERT(m_Type == type_t::boolean); return m_Type == type_t::boolean ? *boolean_ptr(m_Storage) : scratch<boolean>(); }
+template <> inline       number&  value::get<number>()        { CRUDE_ASSERT(m_Type == type_t::number);  return m_Type == type_t::number  ? *number_ptr(m_Storage)  : scratch<number>();  }
 
 template <> inline const object*  value::get_ptr<object>()  const { if (m_Type == type_t::object)  return object_ptr(m_Storage);  else return nullptr; }
 template <> inline const array*   value::get_ptr<array>()   const { if (m_Type == type_t::array)   return array_ptr(m_Storage);   else return nullptr; }
@@ -245,6 +295,4 @@ template <> inline       string*  value::get_ptr<string>()        { if (m_Type =
 template <> inline       boolean* value::get_ptr<boolean>()       { if (m_Type == type_t::boolean) return boolean_ptr(m_Storage); else return nullptr; }
 template <> inline       number*  value::get_ptr<number>()        { if (m_Type == type_t::number)  return number_ptr(m_Storage);  else return nullptr; }
 
-} // namespace crude_json
-
-# endif // __CRUDE_JSON_H__
+} // namespace CRUDE_JSON_NAMESPACE

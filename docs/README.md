@@ -10,8 +10,8 @@ Project purpose is to serve as a basis for more complex solutions like blueprint
 
 ![node_editor_overview](https://user-images.githubusercontent.com/1197433/89328475-c01bc680-d68d-11ea-88bf-8c4155480927.gif)
 
-Node Editor is build around an idea "draw your content, we do the rest", which mean interactions are handled by editor, content rendering is handled by user. Editor will take care of:
- * placing your node in the word
+Node Editor is built around an idea "draw your content, we do the rest", which means interactions are handled by editor, content rendering is handled by user. Editor will take care of:
+ * placing your node in the world
  * dragging nodes
  * zoom and scrolling
  * selection
@@ -41,85 +41,62 @@ Here are some highlights:
  * Basic shortcuts support (cut/copy/paste/delete)
  * ImGui style API
 
-Editor is used to implement blueprint editor in Spark CE engine, it proved itself there by allowing to do everything we needed. Therefore it is now slowly moving into stable state from beeing a prototype.
+Editor is used to implement blueprint editor in Spark CE engine, it proved itself there by allowing to do everything we needed. Therefore it is now slowly moving into stable state from being a prototype.
 
 Note: Project recently was restructured to mimic ImGui layout.
 
 Please report issues or questions if something isn't clear.
 
-## Default Bindings
-
-The editor reacts to the following mouse and keyboard inputs out of the box.
-Mouse buttons are configurable via `Config::DragButtonIndex`,
-`SelectButtonIndex`, `NavigateButtonIndex` and `ContextMenuButtonIndex`
-(defaults: left button for drag/select, right button for navigate/context).
-Keyboard shortcuts only fire when `AreShortcutsEnabled()` returns `true`.
-
-### Mouse
-
-| Input                                | Action                                                                |
-|--------------------------------------|-----------------------------------------------------------------------|
-| Left click on background             | Clear selection                                                       |
-| Left click on node or link           | Select that object (replaces selection)                               |
-| `Ctrl` + left click                  | Toggle the clicked object in or out of the selection                  |
-| Left drag on background              | Rubber-band select nodes                                              |
-| `Shift` + left drag on background    | Rubber-band select Group nodes                                        |
-| `Alt` + left drag on background      | Rubber-band select links                                              |
-| `Ctrl` + left drag (rubber band)     | Keep the previous selection while lassoing                            |
-| Left drag on a node                  | Move the node (and members of any selected Group)                     |
-| `Shift` + left drag on a node        | Move only the directly-selected nodes                                 |
-| Right drag                           | Pan the canvas                                                        |
-| Right click                          | Open the context menu                                                 |
-| Mouse wheel                          | Zoom in or out (smooth zoom controlled by `Config::EnableSmoothZoom`) |
-| Double-click on a link / background  | Forwarded to the user via the link/background double-click queries    |
-
-### Keyboard
-
-| Input                          | Action                                                            |
-|--------------------------------|-------------------------------------------------------------------|
-| `F` over a node, pin or Group  | Center that object                                                |
-| `F` with a non-empty selection | Center selection                                                  |
-| `F` over the empty background  | Center all content                                                |
-| `Shift` + `F`                  | Same as `F`, but zooms the targeted object or selection           |
-| `Space`                        | Open the context menu at the mouse position                       |
-| `Ctrl` + `X` / `C` / `V` / `D` | Cut / Copy / Paste / Duplicate (forwarded as actions to the user) |
+Changes land on the `develop` branch, which `master` follows at releases. Pull requests go to `develop`.
 
 ## Dependencies
 
- * Vanilla ImGui 1.72+
+ * Dear ImGui 1.89 (November 2022) or newer, tested up to 1.93.0 WIP
  * C++14
 
 ### Dependencies for examples:
- * https://github.com/thedmd/imgui/tree/feature/layout (used in blueprints sample only)
 
-### Optional extension you can pull into your local copy of ImGui node editor can take advantage of:
- * ~~https://github.com/thedmd/imgui/tree/feature/draw-list-fringe-scale (for sharp rendering, while zooming)~~ It is part of ImGui since 1.80 release
- * https://github.com/thedmd/imgui/tree/feature/extra-keys (for extra shortcuts)
+ * [thedmd/imgui feature/layout-external](https://github.com/thedmd/imgui/tree/feature/layout-external) (Dear ImGui 1.93.0 WIP with Stack Layout, used in blueprints sample)
+ * stb, and GLFW on macOS, Linux, and Windows with the GLFW backend
+
+CMake fetches all of them at revisions pinned in [examples/cmake](../examples/cmake). An installed GLFW package is used when found.
 
 ## Building / Installing
 
 Node Editor sources are located in root project directory. To use it, simply copy&paste sources into your project. Exactly like you can do with ImGui.
 
 ### Examples
-[Examples](../examples) can be build with CMake:
+[Examples](../examples) can be built with CMake 3.24 or newer:
 ```
-Windows:
-    cmake -S examples -B build -G "Visual Studio 17 2022"
-
-macOS:
-    cmake -S examples -B build -G "Xcode"
-
-Linux:
-    cmake -S examples -B build -G "Unix Makefiles"
-
-Build:
-    cmake --build build --config Release
+cmake -S examples -B build
+cmake --build build --config Release
 ```
-Executables will be located in `build\bin` directory.
+CMake uses the platform's default generator; `-G Ninja` or `-G Xcode` picks another. The executables are in `build/bin`. They find their data next to them, so they can be started from any directory.
+
+On Windows the examples use Win32 and DirectX 11. `-DIMGUI_NODE_EDITOR_EXAMPLES_BACKEND=glfw -DIMGUI_NODE_EDITOR_EXAMPLES_RENDERER=opengl3` builds them with GLFW and OpenGL instead.
+
+On Linux, GLFW needs the X11, Wayland and OpenGL development packages, for example on Ubuntu:
+```
+sudo apt-get install libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev libwayland-dev libxkbcommon-dev libgl1-mesa-dev
+```
+On macOS, the Xcode command line tools are enough.
+
+To build offline or against a local checkout of a dependency, point FetchContent at it, for example `-DFETCHCONTENT_SOURCE_DIR_IMGUI=<path>`. `FETCHCONTENT_SOURCE_DIR_STB` and `FETCHCONTENT_SOURCE_DIR_GLFW` work the same way.
+
+### Tests
+The headless [test suite](../tests) runs with CTest:
+```
+cmake -S tests -B build-tests
+cmake --build build-tests --config Debug
+ctest --test-dir build-tests -C Debug
+```
+`-DIMGUI_DIR=<path>` tests against another copy of Dear ImGui. `-DIMGUI_NODE_EDITOR_TESTS_SANITIZE=ON` builds with AddressSanitizer and adds the tests that detect memory errors. Tests of open issues are expected to fail until the issue is fixed.
+
+`python tests/imgui_walk.py --imgui-repo <clone of Dear ImGui> --work <directory>` runs the suite against every Dear ImGui release from 1.89 on, and accepts `-strict` and docking variants of revisions.
 
 ### Quick Start
 
-Main node editor header is located in [imgui_node_editor.h](../imgui_node_editor.h).
+Main node editor header is located in [imgui_node_editor.h](../imgui_node_editor.h). [API.md](API.md) describes the rules that span the API: the order of calls in a frame, IDs, creating and deleting, input, persistence and coordinates.
 
 Minimal example of one node can be found in [simple-example.cpp](../examples/simple-example/simple-example.cpp).
 Press 'F' in editor to focus on editor content if you see only grid.
@@ -137,9 +114,8 @@ struct Example:
 
     void OnStart() override
     {
-        ed::Config config;
-        config.SettingsFile = "Simple.json";
-        m_Context = ed::CreateEditor(&config);
+        ed::InstallSettingsHandler();
+        m_Context = ed::CreateEditor();
     }
 
     void OnStop() override
@@ -149,6 +125,8 @@ struct Example:
 
     void OnFrame(float deltaTime) override
     {
+        IM_UNUSED(deltaTime);
+
         auto& io = ImGui::GetIO();
 
         ImGui::Text("FPS: %.2f (%.2gms)", io.Framerate, io.Framerate ? 1000.0f / io.Framerate : 0.0f);
@@ -180,18 +158,20 @@ struct Example:
 
 int Main(int argc, char** argv)
 {
-    Example exampe("Simple", argc, argv);
+    Example example("Simple", argc, argv);
 
-    if (exampe.Create())
-        return exampe.Run();
+    if (example.Create())
+        return example.Run();
 
-    return 0;
+    return 1;
 }
 ```
 
 Result:
 
 ![00-Simple](https://user-images.githubusercontent.com/1197433/89328516-cca01f00-d68d-11ea-9959-2da159851101.png)
+
+`ed::InstallSettingsHandler()` keeps node positions, the selection and the view in `imgui.ini`, next to ImGui's windows. Call it before ImGui reads `.ini` data. Applications that keep this state elsewhere set `Config::SettingsName` to `nullptr`, and use `ed::LoadSettingsFromMemory()` and `ed::SaveSettingsToMemory()` once `ed::WantSaveSettings()` is true.
 
 For more details please visit [examples](../examples) folder.
 

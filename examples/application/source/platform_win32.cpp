@@ -9,11 +9,12 @@
 # define NOMINMAX
 # define WIN32_LEAN_AND_MEAN
 # include <windows.h>
+# include <windowsx.h>
 # include <tchar.h>
+# include <cmath>
 # include <string>
 
 # include <imgui.h>
-# include <imgui_internal.h>
 # include "imgui_impl_win32.h"
 
 # if defined(_UNICODE)
@@ -44,6 +45,7 @@ struct PlatformWin32 final
     void ApplicationStop() override;
     bool OpenMainWindow(const char* title, int width, int height) override;
     bool CloseMainWindow() override;
+    void DestroyMainWindow() override;
     void* GetMainWindowHandle() const override;
     void SetMainWindowTitle(const char* title) override;
     void ShowMainWindow() override;
@@ -65,7 +67,6 @@ struct PlatformWin32 final
     bool            m_WasMinimized = false;
     bool            m_CanCloseResult = false;
     Renderer*       m_Renderer = nullptr;
-    ImU32           m_LastEventId = 0;
 };
 
 std::unique_ptr<Platform> CreatePlatform(Application& application)
@@ -218,6 +219,15 @@ bool PlatformWin32::CloseMainWindow()
     return m_CanCloseResult;
 }
 
+void PlatformWin32::DestroyMainWindow()
+{
+    if (m_MainWindowHandle == nullptr)
+        return;
+
+    ImGui_ImplWin32_Shutdown();
+    DestroyWindow(m_MainWindowHandle);
+}
+
 void* PlatformWin32::GetMainWindowHandle() const
 {
     return m_MainWindowHandle;
@@ -243,19 +253,17 @@ bool PlatformWin32::ProcessMainWindowEvents()
     if (m_MainWindowHandle == nullptr)
         return false;
 
-    auto fetchMessage = [this](MSG* msg) -> bool
-    {
-        if (!m_IsMinimized)
-            return PeekMessage(msg, nullptr, 0U, 0U, PM_REMOVE) != 0;
-        else
-            return GetMessage(msg, nullptr, 0U, 0U) != 0;
-    };
-
     MSG msg = {};
-    while (fetchMessage(&msg))
+    while (true)
     {
-        if (msg.message == WM_KEYDOWN && (msg.wParam == VK_ESCAPE))
-            PostQuitMessage(0);
+        // While minimized, wait for messages. GetMessage() returns 0 for WM_QUIT.
+        if (!m_IsMinimized)
+        {
+            if (!PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
+                break;
+        }
+        else if (GetMessage(&msg, nullptr, 0U, 0U) <= 0)
+            return false;
 
         if (msg.message == WM_QUIT)
             return false;
@@ -285,30 +293,7 @@ void PlatformWin32::SetRenderer(Renderer* renderer)
 
 void PlatformWin32::NewFrame()
 {
-    auto& io = ImGui::GetIO();
-    auto& ctx = *ImGui::GetCurrentContext();
-
     ImGui_ImplWin32_NewFrame();
-    auto inputEventCountAfterUpdate = ctx.InputEventsQueue.Size;
-
-    auto windowScale = GetWindowScale();
-
-    for (auto& event : ctx.InputEventsQueue)
-    {
-        if (event.EventId <= m_LastEventId)
-            continue;
-
-        m_LastEventId = event.EventId;
-
-        if (event.Type == ImGuiInputEventType_MousePos)
-        {
-            if (event.MousePos.PosX > -FLT_MAX && event.MousePos.PosY > -FLT_MAX)
-            {
-                event.MousePos.PosX *= windowScale;
-                event.MousePos.PosY *= windowScale;
-            }
-        }
-    }
 
     if (m_WasMinimized)
     {
@@ -330,7 +315,18 @@ void PlatformWin32::Quit()
 
 LRESULT PlatformWin32::WinProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+    // ImGui works in window units times the window scale. Positions the backend reads itself, while
+    // the cursor is outside the window, stay in window units: outside of ImGui's display as well.
+    auto imguiParam = lParam;
+    if (msg == WM_MOUSEMOVE)
+    {
+        const auto scale = GetWindowScale();
+        imguiParam = MAKELPARAM(
+            static_cast<int>(std::floor(GET_X_LPARAM(lParam) * scale)),
+            static_cast<int>(std::floor(GET_Y_LPARAM(lParam) * scale)));
+    }
+
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, imguiParam))
         return 1;
 
     switch (msg)
@@ -338,10 +334,7 @@ LRESULT PlatformWin32::WinProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam
         case WM_CLOSE:
             m_CanCloseResult = m_Application.CanClose();
             if (m_CanCloseResult)
-            {
-                ImGui_ImplWin32_Shutdown();
-                DestroyWindow(hWnd);
-            }
+                PostQuitMessage(0);
             return 0;
 
         case WM_SIZE:
@@ -382,7 +375,8 @@ LRESULT PlatformWin32::WinProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam
         }
 
         case WM_DESTROY:
-            PostQuitMessage(0);
+            m_MainWindowHandle = nullptr;
+            m_IsMinimized      = false;
             return 0;
     }
 

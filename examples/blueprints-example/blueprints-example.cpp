@@ -1,5 +1,6 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <application.h>
+#include <splitter.h>
 #include "utilities/builders.h"
 #include "utilities/widgets.h"
 
@@ -76,6 +77,19 @@ enum class NodeType
     Houdini
 };
 
+static const char* GetNodeTypeName(NodeType type)
+{
+    switch (type)
+    {
+        case NodeType::Blueprint: return "Blueprint";
+        case NodeType::Simple:    return "Simple";
+        case NodeType::Tree:      return "Tree";
+        case NodeType::Comment:   return "Comment";
+        case NodeType::Houdini:   return "Houdini";
+    }
+    return "Unknown";
+}
+
 struct Node;
 
 struct Pin
@@ -85,6 +99,7 @@ struct Pin
     std::string Name;
     PinType     Type;
     PinKind     Kind;
+    char        Text[128] = "Edit Me\nMultiline!"; // edited next to a String output
 
     Pin(int id, const char* name, PinType type):
         ID(id), Node(nullptr), Name(name), Type(type), Kind(PinKind::Input)
@@ -102,7 +117,6 @@ struct Node
     NodeType Type;
     ImVec2 Size;
 
-    std::string State;
     std::string SavedState;
 
     Node(int id, const char* name, ImColor color = ImColor(255, 255, 255)):
@@ -133,18 +147,6 @@ struct NodeIdLess
         return lhs.AsPointer() < rhs.AsPointer();
     }
 };
-
-static bool Splitter(bool split_vertically, float thickness, float* size1, float* size2, float min_size1, float min_size2, float splitter_long_axis_size = -1.0f)
-{
-    using namespace ImGui;
-    ImGuiContext& g = *GImGui;
-    ImGuiWindow* window = g.CurrentWindow;
-    ImGuiID id = window->GetID("##Splitter");
-    ImRect bb;
-    bb.Min = window->DC.CursorPos + (split_vertically ? ImVec2(*size1, 0.0f) : ImVec2(0.0f, *size1));
-    bb.Max = bb.Min + CalcItemSize(split_vertically ? ImVec2(thickness, splitter_long_axis_size) : ImVec2(splitter_long_axis_size, thickness), 0.0f, 0.0f);
-    return SplitterBehavior(bb, id, split_vertically ? ImGuiAxis_X : ImGuiAxis_Y, size1, size2, min_size1, min_size2, 0.0f);
-}
 
 struct Example:
     public Application
@@ -183,10 +185,13 @@ struct Example:
     void UpdateTouch()
     {
         const auto deltaTime = ImGui::GetIO().DeltaTime;
-        for (auto& entry : m_NodeTouchTime)
+        for (auto it = m_NodeTouchTime.begin(); it != m_NodeTouchTime.end(); )
         {
-            if (entry.second > 0.0f)
-                entry.second -= deltaTime;
+            it->second -= deltaTime;
+            if (it->second > 0.0f)
+                ++it;
+            else
+                it = m_NodeTouchTime.erase(it);
         }
     }
 
@@ -244,7 +249,9 @@ struct Example:
         if (!a || !b || a == b || a->Kind == b->Kind || a->Type != b->Type || a->Node == b->Node)
             return false;
 
-        return true;
+        // An input takes one link, which also rules out a second link between the same pins.
+        auto input = a->Kind == PinKind::Input ? a : b;
+        return !IsPinLinked(input->ID);
     }
 
     //void DrawItemRect(ImColor color, float expand = 0.0f)
@@ -489,39 +496,9 @@ struct Example:
 
     void OnStart() override
     {
+        ed::InstallSettingsHandler();
+
         ed::Config config;
-
-        config.SettingsFile = "Blueprints.json";
-
-        config.UserPointer = this;
-
-        config.LoadNodeSettings = [](ed::NodeId nodeId, char* data, void* userPointer) -> size_t
-        {
-            auto self = static_cast<Example*>(userPointer);
-
-            auto node = self->FindNode(nodeId);
-            if (!node)
-                return 0;
-
-            if (data != nullptr)
-                memcpy(data, node->State.data(), node->State.size());
-            return node->State.size();
-        };
-
-        config.SaveNodeSettings = [](ed::NodeId nodeId, const char* data, size_t size, ed::SaveReasonFlags reason, void* userPointer) -> bool
-        {
-            auto self = static_cast<Example*>(userPointer);
-
-            auto node = self->FindNode(nodeId);
-            if (!node)
-                return false;
-
-            node->State.assign(data, size);
-
-            self->TouchNode(nodeId);
-
-            return true;
-        };
 
         m_Editor = ed::CreateEditor(&config);
         ed::SetCurrentEditor(m_Editor);
@@ -572,7 +549,7 @@ struct Example:
             if (id)
             {
                 DestroyTexture(id);
-                id = nullptr;
+                id = ImTextureID{};
             }
         };
 
@@ -683,7 +660,8 @@ struct Example:
         ImGui::EndHorizontal();
 
         static ImGuiTextFilter filter;
-        filter.Draw("##filter", paneWidth);
+        ImGui::SetNextItemWidth(paneWidth);
+        filter.Draw("##filter");
 
         ImGui::Spacing();
 
@@ -741,9 +719,9 @@ struct Example:
         selectedLinks.resize(linkCount);
 
         int saveIconWidth     = GetTextureWidth(m_SaveIcon);
-        int saveIconHeight    = GetTextureWidth(m_SaveIcon);
+        int saveIconHeight    = GetTextureHeight(m_SaveIcon);
         int restoreIconWidth  = GetTextureWidth(m_RestoreIcon);
-        int restoreIconHeight = GetTextureWidth(m_RestoreIcon);
+        int restoreIconHeight = GetTextureHeight(m_RestoreIcon);
 
         ImGui::GetWindowDrawList()->AddRectFilled(
             ImGui::GetCursorScreenPos(),
@@ -783,8 +761,9 @@ struct Example:
 
                 ed::NavigateToSelection();
             }
-            if (ImGui::IsItemHovered() && !node.State.empty())
-                ImGui::SetTooltip("State: %s", node.State.c_str());
+            ed::NodeState state;
+            if (ImGui::IsItemHovered() && ed::GetNodeState(node.ID, &state))
+                ImGui::SetTooltip("State: %s", ed::FormatNodeState(state));
 
             auto id = std::string("(") + std::to_string(reinterpret_cast<uintptr_t>(node.ID.AsPointer())) + ")";
             auto textSize = ImGui::CalcTextSize(id.c_str(), nullptr);
@@ -804,8 +783,8 @@ struct Example:
 # endif
             if (node.SavedState.empty())
             {
-                if (ImGui::InvisibleButton("save", ImVec2((float)saveIconWidth, (float)saveIconHeight)))
-                    node.SavedState = node.State;
+                if (ImGui::InvisibleButton("save", ImVec2((float)saveIconWidth, (float)saveIconHeight)) && ed::GetNodeState(node.ID, &state))
+                    node.SavedState = ed::FormatNodeState(state);
 
                 if (ImGui::IsItemActive())
                     drawList->AddImage(m_SaveIcon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 96));
@@ -830,8 +809,9 @@ struct Example:
             {
                 if (ImGui::InvisibleButton("restore", ImVec2((float)restoreIconWidth, (float)restoreIconHeight)))
                 {
-                    node.State = node.SavedState;
-                    ed::RestoreNodeState(node.ID);
+                    state.Id = node.ID;
+                    if (ed::ParseNodeState(node.SavedState.c_str(), node.SavedState.size(), &state))
+                        ed::SetNodeState(state);
                     node.SavedState.clear();
                 }
 
@@ -878,7 +858,7 @@ struct Example:
         for (int i = 0; i < linkCount; ++i) ImGui::Text("Link (%p)", selectedLinks[i].AsPointer());
         ImGui::Unindent();
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Z))
+        if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Z))
             for (auto& link : m_Links)
                 ed::Flow(link.ID);
 
@@ -890,6 +870,8 @@ struct Example:
 
     void OnFrame(float deltaTime) override
     {
+        IM_UNUSED(deltaTime);
+
         UpdateTouch();
 
         auto& io = ImGui::GetIO();
@@ -1037,22 +1019,9 @@ struct Example:
                         builder.Output(output.ID);
                         if (output.Type == PinType::String)
                         {
-                            static char buffer[128] = "Edit Me\nMultiline!";
-                            static bool wasActive = false;
-
                             ImGui::PushItemWidth(100.0f);
-                            ImGui::InputText("##edit", buffer, 127);
+                            ImGui::InputText("##edit", output.Text, IM_ARRAYSIZE(output.Text));
                             ImGui::PopItemWidth();
-                            if (ImGui::IsItemActive() && !wasActive)
-                            {
-                                ed::EnableShortcuts(false);
-                                wasActive = true;
-                            }
-                            else if (!ImGui::IsItemActive() && wasActive)
-                            {
-                                ed::EnableShortcuts(true);
-                                wasActive = false;
-                            }
                             ImGui::Spring(0);
                         }
                         if (!output.Name.empty())
@@ -1108,7 +1077,7 @@ struct Example:
 
                         ed::PushStyleVar(ed::StyleVar_PinArrowSize, 10.0f);
                         ed::PushStyleVar(ed::StyleVar_PinArrowWidth, 10.0f);
-                        ed::PushStyleVar(ed::StyleVar_PinCorners, ImDrawFlags_RoundCornersBottom);
+                        ed::PushStyleVar(ed::StyleVar_PinCorners, ImDrawFlags_RoundBottom);
                         ed::BeginPin(pin.ID, ed::PinKind::Input);
                         ed::PinPivotRect(inputsRect.GetTL(), inputsRect.GetBR());
                         ed::PinRect(inputsRect.GetTL(), inputsRect.GetBR());
@@ -1150,7 +1119,7 @@ struct Example:
                     ImGui::Spring(1, 0);
                     outputsRect = ImGui_GetItemRect();
 
-                    ed::PushStyleVar(ed::StyleVar_PinCorners, ImDrawFlags_RoundCornersTop);
+                    ed::PushStyleVar(ed::StyleVar_PinCorners, ImDrawFlags_RoundTop);
                     ed::BeginPin(pin.ID, ed::PinKind::Output);
                     ed::PinPivotRect(outputsRect.GetTL(), outputsRect.GetBR());
                     ed::PinRect(outputsRect.GetTL(), outputsRect.GetBR());
@@ -1185,20 +1154,20 @@ struct Example:
                 //    drawList->PathStroke(col, true, thickness);
                 //};
 
-                const auto    topRoundCornersFlags = ImDrawFlags_RoundCornersTop;
-                const auto bottomRoundCornersFlags = ImDrawFlags_RoundCornersBottom;
+                const auto    topRoundCornersFlags = ImDrawFlags_RoundTop;
+                const auto bottomRoundCornersFlags = ImDrawFlags_RoundBottom;
 
                 drawList->AddRectFilled(inputsRect.GetTL() + ImVec2(0, 1), inputsRect.GetBR(),
                     IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), inputAlpha), 4.0f, bottomRoundCornersFlags);
                 //ImGui::PushStyleVar(ImGuiStyleVar_AntiAliasFringeScale, 1.0f);
                 drawList->AddRect(inputsRect.GetTL() + ImVec2(0, 1), inputsRect.GetBR(),
-                    IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), inputAlpha), 4.0f, bottomRoundCornersFlags);
+                    IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), inputAlpha), 4.0f, 1.0f, bottomRoundCornersFlags);
                 //ImGui::PopStyleVar();
                 drawList->AddRectFilled(outputsRect.GetTL(), outputsRect.GetBR() - ImVec2(0, 1),
                     IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), outputAlpha), 4.0f, topRoundCornersFlags);
                 //ImGui::PushStyleVar(ImGuiStyleVar_AntiAliasFringeScale, 1.0f);
                 drawList->AddRect(outputsRect.GetTL(), outputsRect.GetBR() - ImVec2(0, 1),
-                    IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), outputAlpha), 4.0f, topRoundCornersFlags);
+                    IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), outputAlpha), 4.0f, 1.0f, topRoundCornersFlags);
                 //ImGui::PopStyleVar();
                 drawList->AddRectFilled(contentRect.GetTL(), contentRect.GetBR(), IM_COL32(24, 64, 128, 200), 0.0f);
                 //ImGui::PushStyleVar(ImGuiStyleVar_AntiAliasFringeScale, 1.0f);
@@ -1234,6 +1203,9 @@ struct Example:
                 ed::PushStyleVar(ed::StyleVar_PinRadius, 6.0f);
                 ed::BeginNode(node.ID);
 
+                struct PinShape { ImRect Rect; int Alpha; };
+                std::vector<PinShape> pinShapes;
+
                 ImGui::BeginVertical(node.ID.AsPointer());
                 if (!node.Inputs.empty())
                 {
@@ -1241,7 +1213,6 @@ struct Example:
                     ImGui::Spring(1, 0);
 
                     ImRect inputsRect;
-                    int inputAlpha = 200;
                     for (auto& pin : node.Inputs)
                     {
                         ImGui::Dummy(ImVec2(padding, padding));
@@ -1250,7 +1221,7 @@ struct Example:
                         inputsRect.Min.y -= padding;
                         inputsRect.Max.y -= padding;
 
-                        const auto allRoundCornersFlags = ImDrawFlags_RoundCornersAll;
+                        const auto allRoundCornersFlags = ImDrawFlags_RoundAll;
                         //ed::PushStyleVar(ed::StyleVar_PinArrowSize, 10.0f);
                         //ed::PushStyleVar(ed::StyleVar_PinArrowWidth, 10.0f);
                         ed::PushStyleVar(ed::StyleVar_PinCorners, allRoundCornersFlags);
@@ -1262,14 +1233,11 @@ struct Example:
                         //ed::PopStyleVar(3);
                         ed::PopStyleVar(1);
 
-                        auto drawList = ImGui::GetWindowDrawList();
-                        drawList->AddRectFilled(inputsRect.GetTL(), inputsRect.GetBR(),
-                            IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), inputAlpha), 4.0f, allRoundCornersFlags);
-                        drawList->AddRect(inputsRect.GetTL(), inputsRect.GetBR(),
-                            IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), inputAlpha), 4.0f, allRoundCornersFlags);
-
+                        int inputAlpha = 200;
                         if (newLinkPin && !CanCreateLink(newLinkPin, &pin) && &pin != newLinkPin)
                             inputAlpha = (int)(255 * ImGui::GetStyle().Alpha * (48.0f / 255.0f));
+
+                        pinShapes.push_back({ inputsRect, inputAlpha });
                     }
 
                     //ImGui::Spring(1, 0);
@@ -1287,7 +1255,7 @@ struct Example:
                 ImGui::PopStyleColor();
                 ImGui::Spring(1);
                 ImGui::EndVertical();
-                auto contentRect = ImGui_GetItemRect();
+                //auto contentRect = ImGui_GetItemRect();
 
                 ImGui::Spring(1, padding);
                 ImGui::EndHorizontal();
@@ -1298,7 +1266,6 @@ struct Example:
                     ImGui::Spring(1, 0);
 
                     ImRect outputsRect;
-                    int outputAlpha = 200;
                     for (auto& pin : node.Outputs)
                     {
                         ImGui::Dummy(ImVec2(padding, padding));
@@ -1307,32 +1274,34 @@ struct Example:
                         outputsRect.Min.y += padding;
                         outputsRect.Max.y += padding;
 
-                        const auto allRoundCornersFlags = ImDrawFlags_RoundCornersAll;
-                        const auto topRoundCornersFlags = ImDrawFlags_RoundCornersTop;
+                        const auto allRoundCornersFlags = ImDrawFlags_RoundAll;
 
-                        ed::PushStyleVar(ed::StyleVar_PinCorners, topRoundCornersFlags);
+                        ed::PushStyleVar(ed::StyleVar_PinCorners, allRoundCornersFlags);
                         ed::BeginPin(pin.ID, ed::PinKind::Output);
                         ed::PinPivotRect(outputsRect.GetCenter(), outputsRect.GetCenter());
                         ed::PinRect(outputsRect.GetTL(), outputsRect.GetBR());
                         ed::EndPin();
                         ed::PopStyleVar();
 
-
-                        auto drawList = ImGui::GetWindowDrawList();
-                        drawList->AddRectFilled(outputsRect.GetTL(), outputsRect.GetBR(),
-                            IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), outputAlpha), 4.0f, allRoundCornersFlags);
-                        drawList->AddRect(outputsRect.GetTL(), outputsRect.GetBR(),
-                            IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), outputAlpha), 4.0f, allRoundCornersFlags);
-
-
+                        int outputAlpha = 200;
                         if (newLinkPin && !CanCreateLink(newLinkPin, &pin) && &pin != newLinkPin)
                             outputAlpha = (int)(255 * ImGui::GetStyle().Alpha * (48.0f / 255.0f));
+
+                        pinShapes.push_back({ outputsRect, outputAlpha });
                     }
 
                     ImGui::EndHorizontal();
                 }
 
                 ImGui::EndVertical();
+
+                auto drawList = ImGui::GetWindowDrawList();
+                for (auto& pinShape : pinShapes)
+                {
+                    const auto pinColor = IM_COL32((int)(255 * pinBackground.x), (int)(255 * pinBackground.y), (int)(255 * pinBackground.z), pinShape.Alpha);
+                    drawList->AddRectFilled(pinShape.Rect.GetTL(), pinShape.Rect.GetBR(), pinColor, 4.0f, ImDrawFlags_RoundAll);
+                    drawList->AddRect(pinShape.Rect.GetTL(), pinShape.Rect.GetBR(), pinColor, 4.0f, 1.0f, ImDrawFlags_RoundAll);
+                }
 
                 ed::EndNode();
                 ed::PopStyleVar(7);
@@ -1465,7 +1434,7 @@ struct Example:
 
                         newLinkPin = startPin ? startPin : endPin;
 
-                        if (startPin->Kind == PinKind::Input)
+                        if (startPin && startPin->Kind == PinKind::Input)
                         {
                             std::swap(startPin, endPin);
                             std::swap(startPinId, endPinId);
@@ -1491,6 +1460,11 @@ struct Example:
                             {
                                 showLabel("x Incompatible Pin Type", ImColor(45, 32, 32, 180));
                                 ed::RejectNewItem(ImColor(255, 128, 128), 1.0f);
+                            }
+                            else if (IsPinLinked(endPinId))
+                            {
+                                showLabel("x Input Already Linked", ImColor(45, 32, 32, 180));
+                                ed::RejectNewItem(ImColor(255, 0, 0), 2.0f);
                             }
                             else
                             {
@@ -1536,7 +1510,12 @@ struct Example:
                         {
                             auto id = std::find_if(m_Nodes.begin(), m_Nodes.end(), [nodeId](auto& node) { return node.ID == nodeId; });
                             if (id != m_Nodes.end())
+                            {
                                 m_Nodes.erase(id);
+
+                                // Erasing moves the nodes after it, so their pins point at other nodes.
+                                BuildNodes();
+                            }
                         }
                     }
 
@@ -1585,7 +1564,7 @@ struct Example:
             if (node)
             {
                 ImGui::Text("ID: %p", node->ID.AsPointer());
-                ImGui::Text("Type: %s", node->Type == NodeType::Blueprint ? "Blueprint" : (node->Type == NodeType::Tree ? "Tree" : "Comment"));
+                ImGui::Text("Type: %s", GetNodeTypeName(node->Type));
                 ImGui::Text("Inputs: %d", (int)node->Inputs.size());
                 ImGui::Text("Outputs: %d", (int)node->Outputs.size());
             }
@@ -1744,6 +1723,16 @@ struct Example:
         cubic_bezier_subdivide(acceptPoint, c);
     */
 
+        // Nodes the user moved or resized are marked in the node list for a while.
+        if (ed::BeginEdits())
+        {
+            ed::Edit edit;
+            while (ed::QueryEdit(&edit))
+                for (int i = 0; i < edit.NodeCount; ++i)
+                    TouchNode(edit.NodesAfter[i].Id);
+            ed::EndEdits();
+        }
+
         ed::End();
 
         auto editorMin = ImGui::GetItemRectMin();
@@ -1778,8 +1767,8 @@ struct Example:
 
                 auto widgetPosition = ImVec2(p1.x, p0.y) + ImVec2(0.0f, -widgetSize.y);
 
-                drawList->AddRectFilled(widgetPosition, widgetPosition + widgetSize, IM_COL32(100, 80, 80, 190), 3.0f, ImDrawFlags_RoundCornersAll);
-                drawList->AddRect(widgetPosition, widgetPosition + widgetSize, IM_COL32(200, 160, 160, 190), 3.0f, ImDrawFlags_RoundCornersAll);
+                drawList->AddRectFilled(widgetPosition, widgetPosition + widgetSize, IM_COL32(100, 80, 80, 190), 3.0f, ImDrawFlags_RoundAll);
+                drawList->AddRect(widgetPosition, widgetPosition + widgetSize, IM_COL32(200, 160, 160, 190), 3.0f, 1.0f, ImDrawFlags_RoundAll);
                 drawList->AddText(widgetPosition + padding, IM_COL32(255, 255, 255, 255), builder.c_str());
             }
 
@@ -1795,9 +1784,9 @@ struct Example:
     const int            m_PinIconSize = 24;
     std::vector<Node>    m_Nodes;
     std::vector<Link>    m_Links;
-    ImTextureID          m_HeaderBackground = nullptr;
-    ImTextureID          m_SaveIcon = nullptr;
-    ImTextureID          m_RestoreIcon = nullptr;
+    ImTextureID          m_HeaderBackground = ImTextureID{};
+    ImTextureID          m_SaveIcon = ImTextureID{};
+    ImTextureID          m_RestoreIcon = ImTextureID{};
     const float          m_TouchTime = 1.0f;
     std::map<ed::NodeId, float, NodeIdLess> m_NodeTouchTime;
     bool                 m_ShowOrdinals = false;
@@ -1805,10 +1794,10 @@ struct Example:
 
 int Main(int argc, char** argv)
 {
-    Example exampe("Blueprints", argc, argv);
+    Example example("Blueprints", argc, argv);
 
-    if (exampe.Create())
-        return exampe.Run();
+    if (example.Create())
+        return example.Run();
 
-    return 0;
+    return 1;
 }
