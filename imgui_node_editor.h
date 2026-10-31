@@ -16,6 +16,10 @@
 # include <imgui.h>
 # include <cstdint> // std::uintXX_t
 # include <utility> // std::move
+# include <vector>
+
+// Marker for APIs replaced with owning containers in Python bindings.
+#define IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 
 
 //------------------------------------------------------------------------------
@@ -235,6 +239,11 @@ struct Style
     float   SnapLinkToPinDir;         // a boolean: non-zero starts links on the line defined by pin direction
     ImVec4  Colors[StyleColor_Count];
 
+#ifdef IMGUI_BUNDLE_PYTHON_API
+    ImVec4& Color_(StyleColor index) { IM_ASSERT(index >= 0 && index < StyleColor_Count); return Colors[index]; }
+    void SetColor_(StyleColor index, ImVec4 value) { IM_ASSERT(index >= 0 && index < StyleColor_Count); Colors[index] = value; }
+#endif
+
     Style()
     {
         NodePadding              = ImVec4(8, 8, 8, 8);
@@ -406,8 +415,18 @@ IMGUI_NODE_EDITOR_API bool IsActive();  // Same as IsFocused()
 
 IMGUI_NODE_EDITOR_API bool HasSelectionChanged(); // Selection changed in the last frame, also when asked between Begin() and End()
 IMGUI_NODE_EDITOR_API int  GetSelectedObjectCount();
+#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 IMGUI_NODE_EDITOR_API int  GetSelectedNodes(NodeId* nodes, int size);
+#endif
+#ifdef IMGUI_BUNDLE_PYTHON_API
+IMGUI_NODE_EDITOR_API std::vector<NodeId> GetSelectedNodes();
+#endif
+#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 IMGUI_NODE_EDITOR_API int  GetSelectedLinks(LinkId* links, int size);
+#endif
+#ifdef IMGUI_BUNDLE_PYTHON_API
+IMGUI_NODE_EDITOR_API std::vector<LinkId> GetSelectedLinks();
+#endif
 IMGUI_NODE_EDITOR_API bool IsNodeSelected(NodeId nodeId);
 IMGUI_NODE_EDITOR_API bool IsLinkSelected(LinkId linkId);
 IMGUI_NODE_EDITOR_API void ClearSelection();
@@ -481,8 +500,18 @@ IMGUI_NODE_EDITOR_API bool AcceptPaste();
 IMGUI_NODE_EDITOR_API bool AcceptDuplicate();
 IMGUI_NODE_EDITOR_API bool AcceptCreateNode();
 IMGUI_NODE_EDITOR_API int  GetActionContextSize();
+#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 IMGUI_NODE_EDITOR_API int  GetActionContextNodes(NodeId* nodes, int size);
+#endif
+#ifdef IMGUI_BUNDLE_PYTHON_API
+IMGUI_NODE_EDITOR_API std::vector<NodeId> GetActionContextNodes();
+#endif
+#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 IMGUI_NODE_EDITOR_API int  GetActionContextLinks(LinkId* links, int size);
+#endif
+#ifdef IMGUI_BUNDLE_PYTHON_API
+IMGUI_NODE_EDITOR_API std::vector<LinkId> GetActionContextLinks();
+#endif
 IMGUI_NODE_EDITOR_API void EndShortcut();
 
 // Zoom factor of the view: 2 at 200%, as in Config::CustomZoomLevels.
@@ -508,7 +537,12 @@ IMGUI_NODE_EDITOR_API ImVec2 ScreenToCanvas(const ImVec2& pos);
 IMGUI_NODE_EDITOR_API ImVec2 CanvasToScreen(const ImVec2& pos);
 
 IMGUI_NODE_EDITOR_API int GetNodeCount();                                // Returns number of submitted nodes since Begin() call
+#ifdef IMGUI_BUNDLE_PYTHON_UNSUPPORTED_API
 IMGUI_NODE_EDITOR_API int GetOrderedNodeIds(NodeId* nodes, int size);    // Fills an array with node id's in order they're drawn; up to 'size` elements are set. Returns actual size of filled id's, or the number of nodes when 'nodes' is null. Between Begin() and End(), only nodes submitted so far.
+#endif
+#ifdef IMGUI_BUNDLE_PYTHON_API
+IMGUI_NODE_EDITOR_API std::vector<NodeId> GetOrderedNodeIds();
+#endif
 
 
 

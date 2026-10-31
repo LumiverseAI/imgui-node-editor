@@ -873,3 +873,47 @@ int ax::NodeEditor::GetOrderedNodeIds(NodeId* nodes, int size)
 {
     return CurrentEditor()->GetNodeIds(nodes, size);
 }
+
+#ifdef IMGUI_BUNDLE_PYTHON_API
+
+std::vector<ax::NodeEditor::NodeId> ax::NodeEditor::GetSelectedNodes()
+{
+    std::vector<NodeId> result(static_cast<size_t>(GetSelectedObjectCount()));
+    const int written = GetSelectedNodes(result.data(), static_cast<int>(result.size()));
+    result.resize(static_cast<size_t>(written));
+    return result;
+}
+
+std::vector<ax::NodeEditor::LinkId> ax::NodeEditor::GetSelectedLinks()
+{
+    std::vector<LinkId> result(static_cast<size_t>(GetSelectedObjectCount()));
+    const int written = GetSelectedLinks(result.data(), static_cast<int>(result.size()));
+    result.resize(static_cast<size_t>(written));
+    return result;
+}
+
+std::vector<ax::NodeEditor::NodeId> ax::NodeEditor::GetActionContextNodes()
+{
+    std::vector<NodeId> result(static_cast<size_t>(GetActionContextSize()));
+    const int written = GetActionContextNodes(result.data(), static_cast<int>(result.size()));
+    result.resize(static_cast<size_t>(written));
+    return result;
+}
+
+std::vector<ax::NodeEditor::LinkId> ax::NodeEditor::GetActionContextLinks()
+{
+    std::vector<LinkId> result(static_cast<size_t>(GetActionContextSize()));
+    const int written = GetActionContextLinks(result.data(), static_cast<int>(result.size()));
+    result.resize(static_cast<size_t>(written));
+    return result;
+}
+
+std::vector<ax::NodeEditor::NodeId> ax::NodeEditor::GetOrderedNodeIds()
+{
+    std::vector<NodeId> result(static_cast<size_t>(GetNodeCount()));
+    const int written = GetOrderedNodeIds(result.data(), static_cast<int>(result.size()));
+    result.resize(static_cast<size_t>(written));
+    return result;
+}
+
+#endif
