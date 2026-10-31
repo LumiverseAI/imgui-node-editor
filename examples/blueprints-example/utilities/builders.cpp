@@ -22,6 +22,7 @@ util::BlueprintNodeBuilder::BlueprintNodeBuilder(ImTextureID texture, int textur
     HeaderTextureHeight(textureHeight),
     CurrentNodeId(0),
     CurrentStage(Stage::Invalid),
+    HeaderColor(IM_COL32_WHITE),
     HasHeader(false)
 {
 }
@@ -66,7 +67,7 @@ void util::BlueprintNodeBuilder::End()
                 HeaderMin - ImVec2(8 - halfBorderWidth, 4 - halfBorderWidth),
                 HeaderMax + ImVec2(8 - halfBorderWidth, 0),
                 ImVec2(0.0f, 0.0f), uv,
-                headerColor, GetStyle().NodeRounding, ImDrawFlags_RoundCornersTop);
+                headerColor, GetStyle().NodeRounding, ImDrawFlags_RoundTop);
 
             if (ContentMin.y > HeaderMax.y)
             {
@@ -162,7 +163,6 @@ bool util::BlueprintNodeBuilder::SetStage(Stage stage)
     auto oldStage = CurrentStage;
     CurrentStage = stage;
 
-    ImVec2 cursor;
     switch (oldStage)
     {
         case Stage::Begin:

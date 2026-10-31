@@ -1,6 +1,4 @@
 //------------------------------------------------------------------------------
-// VERSION 0.9.1
-//
 // LICENSE
 //   This software is dual-licensed to the public domain and under the following
 //   license: you are granted a perpetual, irrevocable license to copy, modify,
@@ -34,7 +32,9 @@ struct ImLine
 inline bool operator==(const ImVec2& lhs, const ImVec2& rhs);
 inline bool operator!=(const ImVec2& lhs, const ImVec2& rhs);
 # endif
+# if IMGUI_VERSION_NUM < 19268
 inline ImVec2 operator*(const float lhs, const ImVec2& rhs);
+# endif
 # if IMGUI_VERSION_NUM < 18955
 inline ImVec2 operator-(const ImVec2& lhs);
 # endif

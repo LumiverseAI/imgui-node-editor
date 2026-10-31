@@ -3,6 +3,7 @@
 # include <imgui_internal.h>
 # include <imgui_canvas.h>
 # include <application.h>
+# include <splitter.h>
 
 static void DrawScale(const ImVec2& from, const ImVec2& to, float majorUnit, float minorUnit, float labelAlignment, float sign = 1.0f)
 {
@@ -46,18 +47,6 @@ static void DrawScale(const ImVec2& from, const ImVec2& to, float majorUnit, flo
     }
 }
 
-static bool Splitter(bool split_vertically, float thickness, float* size1, float* size2, float min_size1, float min_size2, float splitter_long_axis_size = -1.0f)
-{
-    using namespace ImGui;
-    ImGuiContext& g = *GImGui;
-    ImGuiWindow* window = g.CurrentWindow;
-    ImGuiID id = window->GetID("##Splitter");
-    ImRect bb;
-    bb.Min = window->DC.CursorPos + (split_vertically ? ImVec2(*size1, 0.0f) : ImVec2(0.0f, *size1));
-    bb.Max = bb.Min + CalcItemSize(split_vertically ? ImVec2(thickness, splitter_long_axis_size) : ImVec2(splitter_long_axis_size, thickness), 0.0f, 0.0f);
-    return SplitterBehavior(bb, id, split_vertically ? ImGuiAxis_X : ImGuiAxis_Y, size1, size2, min_size1, min_size2, 0.0f);
-}
-
 struct Example:
     public Application
 {
@@ -65,6 +54,8 @@ struct Example:
 
     void OnFrame(float deltaTime) override
     {
+        IM_UNUSED(deltaTime);
+
         auto& io = ImGui::GetIO();
 
         ImGui::Text("FPS: %.2f (%.2gms)", io.Framerate, io.Framerate ? 1000.0f / io.Framerate : 0.0f);
@@ -212,14 +203,18 @@ struct Example:
 
             viewRect = canvas.ViewRect();
 
-            if (viewRect.Max.x > 0.0f)
-                DrawScale(ImVec2(0.0f, 0.0f), ImVec2(viewRect.Max.x, 0.0f), 100.0f, 10.0f, 0.6f);
-            if (viewRect.Min.x < 0.0f)
-                DrawScale(ImVec2(0.0f, 0.0f), ImVec2(viewRect.Min.x, 0.0f), 100.0f, 10.0f, 0.6f, -1.0f);
-            if (viewRect.Max.y > 0.0f)
-                DrawScale(ImVec2(0.0f, 0.0f), ImVec2(0.0f, viewRect.Max.y), 100.0f, 10.0f, 0.6f);
-            if (viewRect.Min.y < 0.0f)
-                DrawScale(ImVec2(0.0f, 0.0f), ImVec2(0.0f, viewRect.Min.y), 100.0f, 10.0f, 0.6f, -1.0f);
+            // Custom drawing can be skipped while the canvas is out of view.
+            if (canvas.IsVisible())
+            {
+                if (viewRect.Max.x > 0.0f)
+                    DrawScale(ImVec2(0.0f, 0.0f), ImVec2(viewRect.Max.x, 0.0f), 100.0f, 10.0f, 0.6f);
+                if (viewRect.Min.x < 0.0f)
+                    DrawScale(ImVec2(0.0f, 0.0f), ImVec2(viewRect.Min.x, 0.0f), 100.0f, 10.0f, 0.6f, -1.0f);
+                if (viewRect.Max.y > 0.0f)
+                    DrawScale(ImVec2(0.0f, 0.0f), ImVec2(0.0f, viewRect.Max.y), 100.0f, 10.0f, 0.6f);
+                if (viewRect.Min.y < 0.0f)
+                    DrawScale(ImVec2(0.0f, 0.0f), ImVec2(0.0f, viewRect.Min.y), 100.0f, 10.0f, 0.6f, -1.0f);
+            }
 
             ImGui::Text("Hovered:     %d", ImGui::IsItemHovered() ? 1 : 0);
 
@@ -262,10 +257,10 @@ struct Example:
 
 int Main(int argc, char** argv)
 {
-    Example exampe("Canvas", argc, argv);
+    Example example("Canvas", argc, argv);
 
-    if (exampe.Create())
-        return exampe.Run();
+    if (example.Create())
+        return example.Run();
 
-    return 0;
+    return 1;
 }

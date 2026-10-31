@@ -2,6 +2,7 @@
 #     define IMGUI_DEFINE_MATH_OPERATORS
 # endif
 # include "imgui_canvas.h"
+# include <cmath>
 # include <type_traits>
 
 // https://stackoverflow.com/a/36079786
@@ -32,10 +33,13 @@
 #     define ImDrawCallback_ImCanvas        (ImDrawCallback)(-2)
 # endif
 
-// [ADAPT_IMGUI_BUNDLE] inform that child windows are incompatible with imgui-node-editor (cf https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-2404714757)
-void Priv_ImGuiNodeEditor_EnterCanvas();
-void Priv_ImGuiNodeEditor_ExitCanvas();
-// [/ADAPT_IMGUI_BUNDLE]
+// The canvas which is currently in local space (between EnterLocalSpace() and LeaveLocalSpace()), if any
+static ImGuiEx::Canvas* s_CanvasInLocalSpace = nullptr;
+
+bool ImGuiEx::IsInsideCanvas()
+{
+    return s_CanvasInLocalSpace != nullptr;
+}
 
 namespace ImCanvasDetails {
 
@@ -80,6 +84,7 @@ struct VtxCurrentOffsetRef
 
 } // namespace ImCanvasDetails
 
+# if IMGUI_VERSION_NUM < 19292
 // Returns a reference to _FringeScale extension to ImDrawList
 //
 // If ImDrawList does not have _FringeScale a placeholder is returned.
@@ -88,11 +93,23 @@ static inline float& ImFringeScaleRef(ImDrawList* drawList)
     using namespace ImCanvasDetails;
     return FringeScaleRef::Get<ImDrawList>(drawList);
 }
+# endif
 
 static inline unsigned int& ImVtxOffsetRef(ImDrawList* drawList)
 {
     using namespace ImCanvasDetails;
     return VtxCurrentOffsetRef::Get<ImDrawList>(drawList);
+}
+
+// Returns a reference to the IME input position requested in this frame,
+// which ImGui 1.87 moved into PlatformImeData.
+static inline ImVec2& ImPlatformImeInputPosRef()
+{
+# if IMGUI_VERSION_NUM >= 18604
+    return GImGui->PlatformImeData.InputPos;
+# else
+    return GImGui->PlatformImePos;
+# endif
 }
 
 static inline ImVec2 ImSelectPositive(const ImVec2& lhs, const ImVec2& rhs) { return ImVec2(lhs.x > 0.0f ? lhs.x : rhs.x, lhs.y > 0.0f ? lhs.y : rhs.y); }
@@ -109,12 +126,18 @@ bool ImGuiEx::Canvas::Begin(ImGuiID id, const ImVec2& size)
     m_WidgetPosition = ImGui::GetCursorScreenPos();
     m_WidgetSize = ImSelectPositive(size, ImGui::GetContentRegionAvail());
     m_WidgetRect = ImRect(m_WidgetPosition, m_WidgetPosition + m_WidgetSize);
-    m_DrawList = ImGui::GetWindowDrawList();
+    m_Window = ImGui::GetCurrentWindow();
+    m_DrawList = m_Window->DrawList;
 
     UpdateViewTransformPosition();
 
-    if (ImGui::IsClippedEx(m_WidgetRect, id))
-        return false;
+    // A clipped canvas still enters local space: its content is clipped away there,
+    // instead of being drawn untransformed, and End() reserves its layout space.
+# if IMGUI_VERSION_NUM > 18415
+    m_IsVisible = !ImGui::IsClippedEx(m_WidgetRect, id);
+# else
+    m_IsVisible = !ImGui::IsClippedEx(m_WidgetRect, id, false);
+# endif
 
     // Save current channel, so we can assert when user
     // call canvas API with different one.
@@ -133,8 +156,17 @@ bool ImGuiEx::Canvas::Begin(ImGuiID id, const ImVec2& size)
     SaveInputState();
     SaveViewportState();
 
-    // Record cursor max to prevent scrollbars from appearing.
-    m_WindowCursorMaxBackup = ImGui::GetCurrentWindow()->DC.CursorMaxPos;
+    // Record cursor max to prevent scrollbars from appearing, and ideal max, which
+    // tables and tab bars inside extend, to keep the window's auto-fit size.
+    m_WindowCursorMaxBackup = m_Window->DC.CursorMaxPos;
+    m_WindowIdealMaxBackup  = m_Window->DC.IdealMaxPos;
+
+    // Local space lays lines out from x = 0, in the visible part of the canvas.
+    m_LocalIndent            = 0.0f;
+    m_LocalColumnsOffset     = 0.0f;
+    m_LocalGroupOffset       = 0.0f;
+    m_LocalWorkRect          = CalcViewRect(m_View);
+    m_LocalContentRegionRect = m_LocalWorkRect;
 
     EnterLocalSpace();
 
@@ -150,16 +182,39 @@ bool ImGuiEx::Canvas::Begin(ImGuiID id, const ImVec2& size)
 
     m_InBeginEnd = true;
 
-    // [ADAPT_IMGUI_BUNDLE]: added ImGuiContextHookType_BeginWindow, ImGuiContextHookType_EndWindow, cf https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-1681806764
+    // Popups, combos, color pickers and tooltips begun from inside the canvas work without Suspend() / Resume() when Dear ImGui
+    // provides ImGuiContext::BeginWindowCallback / EndWindowCallback (IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS). The callbacks convert
+    // the position of the window to screen space and suspend the canvas while it is open.
+    // Without them, user code must wrap such windows in Suspend() / Resume().
+    // (idea of @lukaasm, https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-1681806764)
+# if defined(IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS)
     {
-        auto beginWindowHook = ImGuiContextHook{};
-        beginWindowHook.UserData = this;
-        beginWindowHook.Type = ImGuiContextHookType_BeginWindow;
-        beginWindowHook.Callback = []( ImGuiContext * context, ImGuiContextHook * hook )
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        m_PreviousBeginWindowCallback = g.BeginWindowCallback;
+        m_PreviousEndWindowCallback = g.EndWindowCallback;
+        m_PreviousBeginEndWindowCallbackUserData = g.BeginEndWindowCallbackUserData;
+        g.BeginEndWindowCallbackUserData = this;
+
+        g.BeginWindowCallback = []( ImGuiContext * context, void * userData )
         {
             //ImGui::SetNextWindowViewport( ImGui::GetCurrentWindow()->Viewport->ID );
 
-            auto canvas = reinterpret_cast< Canvas * >( hook->UserData );
+            auto canvas = reinterpret_cast< Canvas * >( userData );
+
+            // A child window is about to begin inside the canvas: this cannot work (BeginChildEx() sets the child flags right before calling Begin())
+            if ( canvas->m_BeginWindowDepth == 0 && canvas->m_SuspendCounter == 0 && ( context->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasChildFlags ) != 0 )
+            {
+                fprintf(stderr, "%s", R"(
+Sorry, child windows are incompatible with the canvas of imgui-node-editor, and cannot be used while it is active.
+    Incompatible widgets are:
+        ImGui::BeginChild() and ImGui::EndChild()
+        ImGui::BeginListBox() and ImGui::EndListBox()
+        ImGui::InputTextMultiline(), unless Dear ImGui provides ImGuiContext::InputTextMultilineOverride (use ed::InputTextMultiline() instead)
+    Please examine the call stack to find the culprit.
+)");
+                context->NextWindowData.ClearFlags(); // IM_ASSERT may be defined to throw: do not leave the child settings to the next window
+                IM_ASSERT(false && "ImGui::BeginChild() should not be called inside the canvas of imgui-node-editor");
+            }
 
             canvas->m_BeginWindowDepth += 1;
             if (canvas->m_BeginWindowDepth > 1)
@@ -167,6 +222,14 @@ bool ImGuiEx::Canvas::Begin(ImGuiID id, const ImVec2& size)
 
             if ( canvas->m_SuspendCounter == 0 )
             {
+                // Combo popup: BeginComboPopup() chose its position by testing where the popup fits, with a position in canvas space
+                // and a size in pixels: the result is wrong when the canvas is zoomed (at zoom 2, a combo located low in the window
+                // opens its popup above itself, with a gap). Anchor the popup below the combo instead.
+                // (the combo is the last item, and the id of its popup derives from the id of the combo: see ImGui::BeginCombo())
+                if ( ( context->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasPos ) != 0 && context->OpenPopupStack.Size > 0
+                    && context->OpenPopupStack.back().PopupId == ImHashStr( "##ComboPopup", 0, context->LastItemData.ID ) )
+                    context->NextWindowData.PosVal = context->LastItemData.Rect.GetBL();
+
                 if ( ( context->NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasPos ) != 0 )
                 {
                     auto pos = canvas->FromLocal( context->NextWindowData.PosVal );
@@ -189,39 +252,86 @@ bool ImGuiEx::Canvas::Begin(ImGuiID id, const ImVec2& size)
 
             }
             canvas->m_BeginWindowCursorBackup = ImGui::GetCursorScreenPos();
-            canvas->Suspend();
+            if ( canvas->m_WindowSuspendHandler )
+            {
+                canvas->m_WindowSuspendHandler( canvas->m_WindowSuspendHandlersUserData );
+            }
+            else
+            {
+                // Suspend() must run on the draw channel that was current in Begin()
+                const int lastChannel = canvas->m_DrawList->_Splitter._Current;
+                canvas->m_DrawList->ChannelsSetCurrent(canvas->m_ExpectedChannel);
+                canvas->Suspend();
+                canvas->m_DrawList->ChannelsSetCurrent(lastChannel);
+            }
         };
 
-        m_beginWindowHook = ImGui::AddContextHook( ImGui::GetCurrentContext(), &beginWindowHook );
-
-        auto endWindowHook = ImGuiContextHook{};
-        endWindowHook.UserData = this;
-        endWindowHook.Type = ImGuiContextHookType_EndWindow;
-        endWindowHook.Callback = []( ImGuiContext * ctx, ImGuiContextHook * hook )
+        g.EndWindowCallback = []( ImGuiContext * /*context*/, void * userData )
         {
-            auto canvas = reinterpret_cast< Canvas * >( hook->UserData );
+            auto canvas = reinterpret_cast< Canvas * >( userData );
 
             canvas->m_BeginWindowDepth -= 1;
             if (canvas->m_BeginWindowDepth > 0)
                 return;
 
-            canvas->Resume();
+            if ( canvas->m_WindowResumeHandler )
+            {
+                canvas->m_WindowResumeHandler( canvas->m_WindowSuspendHandlersUserData );
+            }
+            else
+            {
+                const int lastChannel = canvas->m_DrawList->_Splitter._Current;
+                canvas->m_DrawList->ChannelsSetCurrent(canvas->m_ExpectedChannel);
+                canvas->Resume();
+                canvas->m_DrawList->ChannelsSetCurrent(lastChannel);
+            }
             ImGui::SetCursorScreenPos( canvas->m_BeginWindowCursorBackup );
             ImGui::GetCurrentWindow()->DC.IsSetPos = false;
         };
-
-        m_endWindowHook = ImGui::AddContextHook( ImGui::GetCurrentContext(), &endWindowHook );
     }
-    // [/ADAPT_IMGUI_BUNDLE]
+# endif // IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS
 
     return true;
 }
 
+ImGuiEx::Canvas::~Canvas()
+{
+# if defined(IMGUI_HAS_INPUT_TEXT_MULTILINE_OVERRIDE) || defined(IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS)
+    ImGuiContext* g = ImGui::GetCurrentContext();
+# endif
+    if (s_CanvasInLocalSpace == this)
+    {
+        s_CanvasInLocalSpace = nullptr;
+# if defined(IMGUI_HAS_INPUT_TEXT_MULTILINE_OVERRIDE)
+        if (g)
+            g->InputTextMultilineOverride = NULL;
+# endif
+    }
+# if defined(IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS)
+    if (g && g->BeginEndWindowCallbackUserData == this)
+    {
+        g->BeginWindowCallback = m_PreviousBeginWindowCallback;
+        g->EndWindowCallback = m_PreviousEndWindowCallback;
+        g->BeginEndWindowCallbackUserData = m_PreviousBeginEndWindowCallbackUserData;
+    }
+# endif
+}
+
 void ImGuiEx::Canvas::End()
 {
-    // If you're here your call to Begin() returned false,
-    // or Begin() wasn't called at all.
+    // If you're here, Begin() wasn't called.
     IM_ASSERT(m_InBeginEnd == true);
+
+    // Restored first: the asserts below may throw (the Python builds), and the callbacks would then point to a canvas
+    // that may be destroyed
+# if defined(IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS)
+    {
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        g.BeginWindowCallback = m_PreviousBeginWindowCallback;
+        g.EndWindowCallback = m_PreviousEndWindowCallback;
+        g.BeginEndWindowCallbackUserData = m_PreviousBeginEndWindowCallbackUserData;
+    }
+# endif
 
     // If you're here, please make sure you do not interleave
     // channel splitter with canvas.
@@ -233,46 +343,20 @@ void ImGuiEx::Canvas::End()
     // Check: Unmatched calls to Suspend() / Resume(). Please check your code.
     IM_ASSERT(m_SuspendCounter == 0);
 
+    // Check: Clip rectangle pushed inside the canvas wasn't popped.
+    IM_ASSERT(m_DrawList->_ClipRectStack.Size == m_ClipRectStackSize);
+
     LeaveLocalSpace();
+    m_SuspendedClipRects.resize(0);
 
-    // [ADAPT_IMGUI_BUNDLE] Sentinel-keyed clip-rect transform (post-merge).
-    // By now the node editor has merged all channels (it calls ChannelsMerge() before Canvas::End),
-    // so command order is final. Walk the buffer: a BEGIN sentinel (UserCallbackData==nullptr) opens
-    // a canvas local-space region, an END sentinel (UserCallbackData==(void*)1) closes it. Transform
-    // the clip rect of every command inside a region exactly once (vertices were already transformed
-    // in LeaveLocalSpace), then remove all sentinels (they must not reach the backend).
-    {
-        int depth = 0;
-        for (int i = 0; i < m_DrawList->CmdBuffer.Size; ++i)
-        {
-            ImDrawCmd& cmd = m_DrawList->CmdBuffer[i];
-            if (cmd.UserCallback == ImDrawCallback_ImCanvas)
-            {
-                if (cmd.UserCallbackData == nullptr)
-                    ++depth;   // BEGIN
-                else
-                    --depth;   // END
-                continue;
-            }
-            if (depth > 0)
-            {
-                cmd.ClipRect.x = cmd.ClipRect.x * m_View.Scale + m_ViewTransformPosition.x;
-                cmd.ClipRect.y = cmd.ClipRect.y * m_View.Scale + m_ViewTransformPosition.y;
-                cmd.ClipRect.z = cmd.ClipRect.z * m_View.Scale + m_ViewTransformPosition.x;
-                cmd.ClipRect.w = cmd.ClipRect.w * m_View.Scale + m_ViewTransformPosition.y;
-            }
-        }
-        // Remove all sentinels (they must not reach the backend).
-        for (auto it = m_DrawList->CmdBuffer.begin(); it != m_DrawList->CmdBuffer.end(); )
-        {
-            if (it->UserCallback == ImDrawCallback_ImCanvas)
-                it = m_DrawList->CmdBuffer.erase(it);
-            else
-                ++it;
-        }
-    }
+    // Misuse that asserted already can leave a sentinel behind, which a renderer
+    // would call.
+    for (int i = m_DrawList->CmdBuffer.Size - 1; i >= 0; --i)
+        if (m_DrawList->CmdBuffer[i].UserCallback == ImDrawCallback_ImCanvas && m_DrawList->CmdBuffer[i].UserCallbackData == this)
+            m_DrawList->CmdBuffer.erase(m_DrawList->CmdBuffer.Data + i);
 
-    ImGui::GetCurrentWindow()->DC.CursorMaxPos = m_WindowCursorMaxBackup;
+    m_Window->DC.CursorMaxPos = m_WindowCursorMaxBackup;
+    m_Window->DC.IdealMaxPos  = m_WindowIdealMaxBackup;
 
 # if IMGUI_VERSION_NUM < 18967
     ImGui::SetItemAllowOverlap();
@@ -286,13 +370,13 @@ void ImGuiEx::Canvas::End()
     //m_DrawList->AddRect(m_WidgetPosition - ImVec2(1.0f, 1.0f), m_WidgetPosition + m_WidgetSize + ImVec2(1.0f, 1.0f), IM_COL32(196, 0, 0, 255));
 
     m_InBeginEnd = false;
+}
 
-    // [ADAPT_IMGUI_BUNDLE]: added ImGuiContextHookType_BeginWindow, ImGuiContextHookType_EndWindow, cf https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-1681806764
-    {
-        ImGui::RemoveContextHook( ImGui::GetCurrentContext(), m_beginWindowHook );
-        ImGui::RemoveContextHook( ImGui::GetCurrentContext(), m_endWindowHook );
-    }
-    // [/ADAPT_IMGUI_BUNDLE]
+void ImGuiEx::Canvas::SetWindowSuspendHandlers(void (*suspend)(void* userData), void (*resume)(void* userData), void* userData)
+{
+    m_WindowSuspendHandler          = suspend;
+    m_WindowResumeHandler           = resume;
+    m_WindowSuspendHandlersUserData = userData;
 }
 
 void ImGuiEx::Canvas::SetView(const ImVec2& origin, float scale)
@@ -302,23 +386,25 @@ void ImGuiEx::Canvas::SetView(const ImVec2& origin, float scale)
 
 void ImGuiEx::Canvas::SetView(const CanvasView& view)
 {
-    if (m_InBeginEnd)
+    // A suspended canvas is in screen space already, and enters local space with the
+    // new view on Resume().
+    const auto inLocalSpace = m_InBeginEnd && m_SuspendCounter == 0;
+    if (inLocalSpace)
         LeaveLocalSpace();
 
-    if (m_View.Origin.x != view.Origin.x || m_View.Origin.y != view.Origin.y)
+    if (m_View.Origin().x != view.Origin().x || m_View.Origin().y != view.Origin().y)
     {
-        m_View.Origin = view.Origin;
+        m_View.SetOrigin(view.Origin());
 
         UpdateViewTransformPosition();
     }
 
-    if (m_View.Scale != view.Scale)
-    {
-        m_View.Scale    = view.Scale;
-        m_View.InvScale = view.InvScale;
-    }
+    if (m_View.Scale() != view.Scale())
+        m_View.SetScale(view.Scale());
 
-    if (m_InBeginEnd)
+    m_ViewRect = CalcViewRect(m_View);
+
+    if (inLocalSpace)
         EnterLocalSpace();
 }
 
@@ -334,7 +420,7 @@ ImGuiEx::CanvasView ImGuiEx::Canvas::CalcCenterView(const ImVec2& canvasPoint) c
     auto localOffset = canvasPoint - localCenter;
     auto offset      = FromLocalV(localOffset);
 
-    return CanvasView{ m_View.Origin - offset, m_View.Scale };
+    return CanvasView{ m_View.Origin() - offset, m_View.Scale() };
 }
 
 void ImGuiEx::Canvas::CenterView(const ImRect& canvasRect)
@@ -357,8 +443,8 @@ ImGuiEx::CanvasView ImGuiEx::Canvas::CalcCenterView(const ImRect& canvasRect) co
     if (widgetAspectRatio <= 0.0f || canvasRectAspectRatio <= 0.0f)
         return View();
 
-    auto newOrigin = m_View.Origin;
-    auto newScale  = m_View.Scale;
+    auto newOrigin = m_View.Origin();
+    auto newScale  = m_View.Scale();
     if (canvasRectAspectRatio > widgetAspectRatio)
     {
         // width span across view
@@ -379,21 +465,29 @@ ImGuiEx::CanvasView ImGuiEx::Canvas::CalcCenterView(const ImRect& canvasRect) co
 
 void ImGuiEx::Canvas::Suspend()
 {
+    // If you're here, Begin() wasn't called, or End() already was.
+    IM_ASSERT(m_InBeginEnd);
+    if (!m_InBeginEnd)
+        return;
+
     // If you're here, please make sure you do not interleave
     // channel splitter with canvas.
     // Always call canvas function with using same channel.
     IM_ASSERT(m_DrawList->_Splitter._Current == m_ExpectedChannel);
 
     if (m_SuspendCounter == 0)
-    {
         LeaveLocalSpace();
-    }
 
     ++m_SuspendCounter;
 }
 
 void ImGuiEx::Canvas::Resume()
 {
+    // If you're here, Begin() wasn't called, or End() already was.
+    IM_ASSERT(m_InBeginEnd);
+    if (!m_InBeginEnd)
+        return;
+
     // If you're here, please make sure you do not interleave
     // channel splitter with canvas.
     // Always call canvas function with using same channel.
@@ -407,55 +501,63 @@ void ImGuiEx::Canvas::Resume()
 
 ImVec2 ImGuiEx::Canvas::FromLocal(const ImVec2& point) const
 {
-    return point * m_View.Scale + m_ViewTransformPosition;
+    return point * m_View.Scale() + m_ViewTransformPosition;
 }
 
 ImVec2 ImGuiEx::Canvas::FromLocal(const ImVec2& point, const CanvasView& view) const
 {
-    return point * view.Scale + view.Origin + m_WidgetPosition;
+    return point * view.Scale() + CalcViewTransformPosition(view);
 }
 
 ImVec2 ImGuiEx::Canvas::FromLocalV(const ImVec2& vector) const
 {
-    return vector * m_View.Scale;
+    return vector * m_View.Scale();
 }
 
 ImVec2 ImGuiEx::Canvas::FromLocalV(const ImVec2& vector, const CanvasView& view) const
 {
-    return vector * view.Scale;
+    return vector * view.Scale();
 }
 
 ImVec2 ImGuiEx::Canvas::ToLocal(const ImVec2& point) const
 {
-    return (point - m_ViewTransformPosition) * m_View.InvScale;
+    return (point - m_ViewTransformPosition) * m_View.InvScale();
 }
 
 ImVec2 ImGuiEx::Canvas::ToLocal(const ImVec2& point, const CanvasView& view) const
 {
-    return (point - view.Origin - m_WidgetPosition) * view.InvScale;
+    return (point - CalcViewTransformPosition(view)) * view.InvScale();
 }
 
 ImVec2 ImGuiEx::Canvas::ToLocalV(const ImVec2& vector) const
 {
-    return vector * m_View.InvScale;
+    return vector * m_View.InvScale();
 }
 
 ImVec2 ImGuiEx::Canvas::ToLocalV(const ImVec2& vector, const CanvasView& view) const
 {
-    return vector * view.InvScale;
+    return vector * view.InvScale();
 }
 
 ImRect ImGuiEx::Canvas::CalcViewRect(const CanvasView& view) const
 {
     ImRect result;
-    result.Min = ImVec2(-view.Origin.x, -view.Origin.y) * view.InvScale;
-    result.Max = (m_WidgetSize - view.Origin) * view.InvScale;
+    const auto transformPosition = CalcViewTransformPosition(view);
+    result.Min = (m_WidgetPosition - transformPosition) * view.InvScale();
+    result.Max = (m_WidgetPosition + m_WidgetSize - transformPosition) * view.InvScale();
     return result;
+}
+
+ImVec2 ImGuiEx::Canvas::CalcViewTransformPosition(const CanvasView& view) const
+{
+    // On whole pixels, so content on whole canvas units is too at scale 1.
+    const auto position = view.Origin() + m_WidgetPosition;
+    return ImVec2(std::floor(position.x), std::floor(position.y));
 }
 
 void ImGuiEx::Canvas::UpdateViewTransformPosition()
 {
-    m_ViewTransformPosition = m_View.Origin + m_WidgetPosition;
+    m_ViewTransformPosition = CalcViewTransformPosition(m_View);
 }
 
 void ImGuiEx::Canvas::SaveInputState()
@@ -463,6 +565,7 @@ void ImGuiEx::Canvas::SaveInputState()
     auto& io = ImGui::GetIO();
     m_MousePosBackup = io.MousePos;
     m_MousePosPrevBackup = io.MousePosPrev;
+    m_MouseDeltaBackup = io.MouseDelta;
     for (auto i = 0; i < IM_ARRAYSIZE(m_MouseClickedPosBackup); ++i)
         m_MouseClickedPosBackup[i] = io.MouseClickedPos[i];
 }
@@ -472,6 +575,7 @@ void ImGuiEx::Canvas::RestoreInputState()
     auto& io = ImGui::GetIO();
     io.MousePos = m_MousePosBackup;
     io.MousePosPrev = m_MousePosPrevBackup;
+    io.MouseDelta = m_MouseDeltaBackup;
     for (auto i = 0; i < IM_ARRAYSIZE(m_MouseClickedPosBackup); ++i)
         io.MouseClickedPos[i] = m_MouseClickedPosBackup[i];
 }
@@ -479,28 +583,34 @@ void ImGuiEx::Canvas::RestoreInputState()
 void ImGuiEx::Canvas::SaveViewportState()
 {
 # if defined(IMGUI_HAS_VIEWPORT)
-    auto window = ImGui::GetCurrentWindow();
-    auto viewport = ImGui::GetWindowViewport();
+    auto viewport = m_Window->Viewport;
 
-    m_WindowPosBackup = window->Pos;
     m_ViewportPosBackup = viewport->Pos;
     m_ViewportSizeBackup = viewport->Size;
+# if IMGUI_VERSION_NUM > 18002
     m_ViewportWorkPosBackup = viewport->WorkPos;
     m_ViewportWorkSizeBackup = viewport->WorkSize;
+# else
+    m_ViewportWorkOffsetMinBackup = viewport->WorkOffsetMin;
+    m_ViewportWorkOffsetMaxBackup = viewport->WorkOffsetMax;
+# endif
 # endif
 }
 
 void ImGuiEx::Canvas::RestoreViewportState()
 {
 # if defined(IMGUI_HAS_VIEWPORT)
-    auto window = ImGui::GetCurrentWindow();
-    auto viewport = ImGui::GetWindowViewport();
+    auto viewport = m_Window->Viewport;
 
-    window->Pos = m_WindowPosBackup;
     viewport->Pos = m_ViewportPosBackup;
     viewport->Size = m_ViewportSizeBackup;
+# if IMGUI_VERSION_NUM > 18002
     viewport->WorkPos = m_ViewportWorkPosBackup;
     viewport->WorkSize = m_ViewportWorkSizeBackup;
+# else
+    viewport->WorkOffsetMin = m_ViewportWorkOffsetMinBackup;
+    viewport->WorkOffsetMax = m_ViewportWorkOffsetMaxBackup;
+# endif
 # endif
 }
 
@@ -520,70 +630,142 @@ void ImGuiEx::Canvas::EnterLocalSpace()
     auto clipped_clip_rect = m_DrawList->_ClipRectStack.back();
     ImGui::PopClipRect();
 
+    // Nothing of a canvas out of view can be seen or hovered.
+    if (!m_IsVisible)
+    {
+        clipped_clip_rect.z = clipped_clip_rect.x;
+        clipped_clip_rect.w = clipped_clip_rect.y;
+    }
+
 # if IMGUI_EX_CANVAS_DEFERED()
     m_Ranges.resize(m_Ranges.Size + 1);
     m_CurrentRange = &m_Ranges.back();
     m_CurrentRange->BeginComandIndex = ImMax(m_DrawList->CmdBuffer.Size, 0);
     m_CurrentRange->BeginVertexIndex = m_DrawList->_VtxCurrentIdx + ImVtxOffsetRef(m_DrawList);
 # endif
+    m_DrawListCommadBufferSize       = ImMax(m_DrawList->CmdBuffer.Size, 0);
     m_DrawListStartVertexIndex       = m_DrawList->_VtxCurrentIdx + ImVtxOffsetRef(m_DrawList);
 
-    // [ADAPT_IMGUI_BUNDLE] Insert a BEGIN sentinel (ImDrawCallback_ImCanvas, UserCallbackData==nullptr)
-    // plus a fresh draw command to isolate this scope's canvas content (prevents clip-rect leakage /
-    // command merging across the canvas boundary). LeaveLocalSpace() adds a matching END sentinel;
-    // Canvas::End() walks BEGIN..END regions post-merge to transform their clip rects local->screen
-    // exactly once. Sentinels are used as boundary markers because they travel with their commands
-    // through the node editor's channel merges, whereas captured command indices do not.
-    m_DrawList->AddCallback(ImDrawCallback_ImCanvas, nullptr);
-    m_DrawList->AddDrawCmd();
+    // Mark where local space begins with a draw command of its own, which also keeps
+    // canvas commands from sharing one with what was drawn before. AddCallback() adds
+    // a fresh command after it, so removing it in LeaveLocalSpace() leaves the buffer
+    // as it would be without it.
+    m_DrawList->AddCallback(ImDrawCallback_ImCanvas, this);
+
+    m_DrawListFirstCommandIndex = ImMax(m_DrawList->CmdBuffer.Size - 1, 0);
+
+    // One layout frame on every ImGui branch, with the window at the local origin.
+    // The window's own layout state comes back on leaving local space, and the
+    // local one on entering it again.
+    m_WindowPosBackup               = m_Window->Pos;
+    m_WindowIndentBackup            = m_Window->DC.Indent.x;
+    m_WindowColumnsOffsetBackup     = m_Window->DC.ColumnsOffset.x;
+    m_WindowGroupOffsetBackup       = m_Window->DC.GroupOffset.x;
+    m_WindowWorkRectBackup          = m_Window->WorkRect;
+    m_WindowContentRegionRectBackup = m_Window->ContentRegionRect;
+    m_Window->Pos                   = ImVec2(0.0f, 0.0f);
+    m_Window->DC.Indent.x           = m_LocalIndent;
+    m_Window->DC.ColumnsOffset.x    = m_LocalColumnsOffset;
+    m_Window->DC.GroupOffset.x      = m_LocalGroupOffset;
+    m_Window->WorkRect              = m_LocalWorkRect;
+    m_Window->ContentRegionRect     = m_LocalContentRegionRect;
 
 # if defined(IMGUI_HAS_VIEWPORT)
-    auto window = ImGui::GetCurrentWindow();
-    window->Pos = ImVec2(0.0f, 0.0f);
-
     auto viewport_min = m_ViewportPosBackup;
     auto viewport_max = m_ViewportPosBackup + m_ViewportSizeBackup;
 
-    viewport_min.x = (viewport_min.x - m_ViewTransformPosition.x) * m_View.InvScale;
-    viewport_min.y = (viewport_min.y - m_ViewTransformPosition.y) * m_View.InvScale;
-    viewport_max.x = (viewport_max.x - m_ViewTransformPosition.x) * m_View.InvScale;
-    viewport_max.y = (viewport_max.y - m_ViewTransformPosition.y) * m_View.InvScale;
+    viewport_min.x = (viewport_min.x - m_ViewTransformPosition.x) * m_View.InvScale();
+    viewport_min.y = (viewport_min.y - m_ViewTransformPosition.y) * m_View.InvScale();
+    viewport_max.x = (viewport_max.x - m_ViewTransformPosition.x) * m_View.InvScale();
+    viewport_max.y = (viewport_max.y - m_ViewTransformPosition.y) * m_View.InvScale();
 
-    auto viewport = ImGui::GetWindowViewport();
+    auto viewport = m_Window->Viewport;
     viewport->Pos  = viewport_min;
     viewport->Size = viewport_max - viewport_min;
 
-    viewport->WorkPos  = m_ViewportWorkPosBackup  * m_View.InvScale;
-    viewport->WorkSize = m_ViewportWorkSizeBackup * m_View.InvScale;
+# if IMGUI_VERSION_NUM > 18002
+    viewport->WorkPos  = (m_ViewportWorkPosBackup - m_ViewTransformPosition) * m_View.InvScale();
+    viewport->WorkSize = m_ViewportWorkSizeBackup * m_View.InvScale();
+# else
+    viewport->WorkOffsetMin = m_ViewportWorkOffsetMinBackup * m_View.InvScale();
+    viewport->WorkOffsetMax = m_ViewportWorkOffsetMaxBackup * m_View.InvScale();
+# endif
 # endif
 
     // Clip rectangle in parent canvas space and move it to local space.
-    clipped_clip_rect.x = (clipped_clip_rect.x - m_ViewTransformPosition.x) * m_View.InvScale;
-    clipped_clip_rect.y = (clipped_clip_rect.y - m_ViewTransformPosition.y) * m_View.InvScale;
-    clipped_clip_rect.z = (clipped_clip_rect.z - m_ViewTransformPosition.x) * m_View.InvScale;
-    clipped_clip_rect.w = (clipped_clip_rect.w - m_ViewTransformPosition.y) * m_View.InvScale;
-    ImGui::PushClipRect(ImVec2(clipped_clip_rect.x, clipped_clip_rect.y), ImVec2(clipped_clip_rect.z, clipped_clip_rect.w), false);
+    m_ScreenClipRect = clipped_clip_rect;
+    clipped_clip_rect.x = (clipped_clip_rect.x - m_ViewTransformPosition.x) * m_View.InvScale();
+    clipped_clip_rect.y = (clipped_clip_rect.y - m_ViewTransformPosition.y) * m_View.InvScale();
+    clipped_clip_rect.z = (clipped_clip_rect.z - m_ViewTransformPosition.x) * m_View.InvScale();
+    clipped_clip_rect.w = (clipped_clip_rect.w - m_ViewTransformPosition.y) * m_View.InvScale();
+    m_LocalClipRect = clipped_clip_rect;
+    m_DrawList->PushClipRect(ImVec2(clipped_clip_rect.x, clipped_clip_rect.y), ImVec2(clipped_clip_rect.z, clipped_clip_rect.w), false);
+    m_ClipRectStackSize = m_DrawList->_ClipRectStack.Size;
+    for (auto& clipRect : m_SuspendedClipRects)
+        m_DrawList->PushClipRect(ImVec2(clipRect.x, clipRect.y), ImVec2(clipRect.z, clipRect.w), false);
+    m_SuspendedClipRects.resize(0);
+    m_Window->ClipRect = ImRect(m_DrawList->_ClipRectStack.back());
 
     // Transform mouse position to local space.
     auto& io = ImGui::GetIO();
-    io.MousePos     = (m_MousePosBackup - m_ViewTransformPosition) * m_View.InvScale;
-    io.MousePosPrev = (m_MousePosPrevBackup - m_ViewTransformPosition) * m_View.InvScale;
+    io.MousePos     = (m_MousePosBackup - m_ViewTransformPosition) * m_View.InvScale();
+    io.MousePosPrev = (m_MousePosPrevBackup - m_ViewTransformPosition) * m_View.InvScale();
+    io.MouseDelta   = m_MouseDeltaBackup * m_View.InvScale();
     for (auto i = 0; i < IM_ARRAYSIZE(m_MouseClickedPosBackup); ++i)
-        io.MouseClickedPos[i] = (m_MouseClickedPosBackup[i] - m_ViewTransformPosition) * m_View.InvScale;
+        io.MouseClickedPos[i] = (m_MouseClickedPosBackup[i] - m_ViewTransformPosition) * m_View.InvScale();
+
+    // An IME position set in local space is mapped to screen space on leaving it.
+    auto& imeInputPos = ImPlatformImeInputPosRef();
+    m_ImeInputPosBackup = imeInputPos;
+    imeInputPos = ImVec2(-FLT_MAX, -FLT_MAX);
 
     m_ViewRect = CalcViewRect(m_View);;
 
+# if IMGUI_VERSION_NUM >= 19292
+    m_LastPixelDensity = m_DrawList->_InvFringeScale;
+    // Zoomed out, the anti-aliased fringe widens from one pixel toward one point (two pixels on a Retina screen): with
+    // a one pixel fringe, a thin stroke wavers from one row of pixels to the next. At zoom 1 and above, one pixel.
+    const float scale = m_View.Scale();
+    const float pixelDensity = scale < 1.0f
+        ? scale * ImMax(1.0f, m_LastPixelDensity * scale)
+        : m_LastPixelDensity * scale;
+    m_DrawList->_SetPixelDensity(pixelDensity);
+# else
     auto& fringeScale = ImFringeScaleRef(m_DrawList);
     m_LastFringeScale = fringeScale;
-    fringeScale *= m_View.InvScale;
+    fringeScale *= m_View.InvScale();
 
-    // [ADAPT_IMGUI_BUNDLE] inform that child windows are incompatible with imgui-node-editor (cf https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-2404714757)
-    Priv_ImGuiNodeEditor_EnterCanvas();
+    // ImDrawList::_Data points to const before ImGui 1.89.
+    auto& sharedData = *const_cast<ImDrawListSharedData*>(m_DrawList->_Data);
+    m_LastCurveTessellationTol = sharedData.CurveTessellationTol;
+    sharedData.CurveTessellationTol *= m_View.InvScale() * m_View.InvScale(); // a squared distance
+# endif
+
+    s_CanvasInLocalSpace = this;
+# if defined(IMGUI_HAS_INPUT_TEXT_MULTILINE_OVERRIDE)
+    // Inside the canvas, ImGui::InputTextMultiline() is replaced by a version that does not use a child window
+    ImGui::GetCurrentContext()->InputTextMultilineOverride = &ImGuiEx::CanvasInputTextMultiline;
+# endif
 }
 
 void ImGuiEx::Canvas::LeaveLocalSpace()
 {
+    // If you're here, a window begun inside the canvas wasn't ended before
+    // Suspend() or End().
+    IM_ASSERT(ImGui::GetCurrentWindow() == m_Window && "Canvas suspended or ended in another window than it began in.");
+    IM_ASSERT(m_DrawList->_ClipRectStack.Size >= m_ClipRectStackSize && "Canvas clip rectangle was popped inside the canvas.");
+
     IM_ASSERT(m_DrawList->_Splitter._Current == m_ExpectedChannel);
+
+    // The sentinel is where local space began in the command buffer it was entered with.
+    int sentinelIndex = -1;
+    for (int i = ImMax(m_DrawListCommadBufferSize - 1, 0); i < m_DrawList->CmdBuffer.Size && sentinelIndex < 0; ++i)
+        if (m_DrawList->CmdBuffer[i].UserCallback == ImDrawCallback_ImCanvas && m_DrawList->CmdBuffer[i].UserCallbackData == this)
+            sentinelIndex = i;
+
+    // If you're here, another draw list splitter or channel is current than the one
+    // the canvas began or resumed with.
+    IM_ASSERT(sentinelIndex >= 0 && "Canvas suspended or ended in another draw list splitter or channel.");
 
 # if IMGUI_EX_CANVAS_DEFERED()
     IM_ASSERT(m_CurrentRange != nullptr);
@@ -598,21 +780,17 @@ void ImGuiEx::Canvas::LeaveLocalSpace()
     m_CurrentRange = nullptr;
 # endif
 
-    // [ADAPT_IMGUI_BUNDLE] Transform vertices to screen space inline: the vertex buffer is
-    // append-only and is never reordered by the node editor's channel merges, so the recorded
-    // vertex range stays valid here.
-    // Clip rects are intentionally NOT transformed here: command indices ARE reordered by channel
-    // merges, so transforming them by index mid-frame double/under-counts and drops geometry when
-    // the view is panned/zoomed. Instead we mark this scope's end with a sentinel and transform
-    // clip rects once, post-merge, in End() (sentinels travel with their commands through merges).
+    // Move vertices to screen space.
     auto vertex    = m_DrawList->VtxBuffer.Data + m_DrawListStartVertexIndex;
     auto vertexEnd = m_DrawList->VtxBuffer.Data + m_DrawList->_VtxCurrentIdx + ImVtxOffsetRef(m_DrawList);
-    if (m_View.Scale != 1.0f)
+
+    // If canvas view is not scaled take a faster path.
+    if (m_View.Scale() != 1.0f)
     {
         while (vertex < vertexEnd)
         {
-            vertex->pos.x = vertex->pos.x * m_View.Scale + m_ViewTransformPosition.x;
-            vertex->pos.y = vertex->pos.y * m_View.Scale + m_ViewTransformPosition.y;
+            vertex->pos.x = vertex->pos.x * m_View.Scale() + m_ViewTransformPosition.x;
+            vertex->pos.y = vertex->pos.y * m_View.Scale() + m_ViewTransformPosition.y;
             ++vertex;
         }
     }
@@ -626,20 +804,233 @@ void ImGuiEx::Canvas::LeaveLocalSpace()
         }
     }
 
-    // [ADAPT_IMGUI_BUNDLE] END sentinel for this local-space scope. EnterLocalSpace() added the
-    // BEGIN sentinel (ImDrawCallback_ImCanvas, UserCallbackData==nullptr); this END one uses
-    // UserCallbackData==(void*)1. End() pairs BEGIN/END post-merge to transform clip rects once.
-    m_DrawList->AddCallback(ImDrawCallback_ImCanvas, (void*)1);
+    // Move clip rectangles to screen space. An edge of the canvas' own clip rectangle, or of
+    // one clipped by it, gets back the value it came from: the round trip through local space
+    // can land just inside it, which a truncating scissor turns into a pixel lost.
+    auto toScreen = [](float value, float local, float screen, float scale, float offset)
+    {
+        return value == local ? screen : value * scale + offset;
+    };
+    for (int i = m_DrawListFirstCommandIndex; i < m_DrawList->CmdBuffer.size(); ++i)
+    {
+        auto& clipRect = m_DrawList->CmdBuffer[i].ClipRect;
+        clipRect.x = toScreen(clipRect.x, m_LocalClipRect.x, m_ScreenClipRect.x, m_View.Scale(), m_ViewTransformPosition.x);
+        clipRect.y = toScreen(clipRect.y, m_LocalClipRect.y, m_ScreenClipRect.y, m_View.Scale(), m_ViewTransformPosition.y);
+        clipRect.z = toScreen(clipRect.z, m_LocalClipRect.z, m_ScreenClipRect.z, m_View.Scale(), m_ViewTransformPosition.x);
+        clipRect.w = toScreen(clipRect.w, m_LocalClipRect.w, m_ScreenClipRect.w, m_View.Scale(), m_ViewTransformPosition.y);
+    }
 
+    if (sentinelIndex >= 0)
+        m_DrawList->CmdBuffer.erase(m_DrawList->CmdBuffer.Data + sentinelIndex);
+
+# if IMGUI_VERSION_NUM >= 19292
+    m_DrawList->_SetPixelDensity(m_LastPixelDensity);
+# else
     auto& fringeScale = ImFringeScaleRef(m_DrawList);
     fringeScale = m_LastFringeScale;
 
-    // And pop \o/
-    ImGui::PopClipRect();
+    const_cast<ImDrawListSharedData*>(m_DrawList->_Data)->CurveTessellationTol = m_LastCurveTessellationTol;
+# endif
+
+    // Clip rectangles pushed inside the canvas are in local space. Set them aside,
+    // with the canvas' own, until Resume().
+    m_SuspendedClipRects.resize(0);
+    for (int i = m_ClipRectStackSize; i < m_DrawList->_ClipRectStack.Size; ++i)
+        m_SuspendedClipRects.push_back(m_DrawList->_ClipRectStack[i]);
+    while (m_DrawList->_ClipRectStack.Size >= m_ClipRectStackSize && m_DrawList->_ClipRectStack.Size > 0)
+        m_DrawList->PopClipRect();
+    m_Window->ClipRect = ImRect(m_DrawList->_ClipRectStack.back());
+
+    auto& imeInputPos = ImPlatformImeInputPosRef();
+    if (imeInputPos.x == -FLT_MAX && imeInputPos.y == -FLT_MAX)
+    {
+        imeInputPos = m_ImeInputPosBackup;
+    }
+    else
+    {
+        imeInputPos = FromLocal(imeInputPos);
+# if IMGUI_VERSION_NUM >= 18604
+        GImGui->PlatformImeData.InputLineHeight *= m_View.Scale();
+# endif
+    }
+
+    m_LocalIndent                = m_Window->DC.Indent.x;
+    m_LocalColumnsOffset         = m_Window->DC.ColumnsOffset.x;
+    m_LocalGroupOffset           = m_Window->DC.GroupOffset.x;
+    m_LocalWorkRect              = m_Window->WorkRect;
+    m_LocalContentRegionRect     = m_Window->ContentRegionRect;
+    m_Window->Pos                = m_WindowPosBackup;
+    m_Window->DC.Indent.x        = m_WindowIndentBackup;
+    m_Window->DC.ColumnsOffset.x = m_WindowColumnsOffsetBackup;
+    m_Window->DC.GroupOffset.x   = m_WindowGroupOffsetBackup;
+    m_Window->WorkRect           = m_WindowWorkRectBackup;
+    m_Window->ContentRegionRect  = m_WindowContentRegionRectBackup;
 
     RestoreInputState();
     RestoreViewportState();
 
-    // [ADAPT_IMGUI_BUNDLE] inform that child windows are incompatible with imgui-node-editor (cf https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-2404714757)
-    Priv_ImGuiNodeEditor_ExitCanvas();
+    s_CanvasInLocalSpace = nullptr;
+# if defined(IMGUI_HAS_INPUT_TEXT_MULTILINE_OVERRIDE)
+    ImGui::GetCurrentContext()->InputTextMultilineOverride = NULL;
+# endif
+}
+
+//------------------------------------------------------------------------------
+// InputTextMultiline inside a canvas
+//------------------------------------------------------------------------------
+
+// A popup must be opened and begun while the canvas is suspended. With the BeginWindow / EndWindow callbacks of Dear ImGui,
+// the canvas does it by itself; without them, we do it here.
+struct SuspendCanvasIfNoHook
+{
+# if !defined(IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS)
+    ImGuiEx::Canvas* m_Canvas;
+    SuspendCanvasIfNoHook(): m_Canvas(s_CanvasInLocalSpace) { if (m_Canvas) m_Canvas->Suspend(); }
+    ~SuspendCanvasIfNoHook()                                { if (m_Canvas) m_Canvas->Resume(); }
+# else
+    SuspendCanvasIfNoHook() {} // the callbacks suspend the canvas
+# endif
+};
+
+bool ImGuiEx::CanvasInputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size, ImGuiInputTextFlags flags, ImGuiInputTextCallback callback, void* user_data)
+{
+    using namespace ImGui;
+
+    if (s_CanvasInLocalSpace == nullptr)
+        return InputTextMultiline(label, buf, buf_size, size, flags, callback, user_data);
+
+    ImGuiWindow* window = GetCurrentWindow();
+    if (window->SkipItems)
+        return false;
+
+    ImGuiContext& g = *GImGui;
+    ImGuiStyle& style = g.Style;
+
+    PushID(label); // make sure to use unique ids
+    const ImGuiID box_id = window->GetID("##ml_box");
+
+    // Resolve the size exactly like the real multiline widget (default = 8 lines high),
+    // honoring SetNextItemWidth() through CalcItemWidth().
+    const ImVec2 label_size = CalcTextSize(label, NULL, true);
+    const float default_h = g.FontSize * 8.0f + style.FramePadding.y * 2.0f;
+    const ImVec2 frame_size = CalcItemSize(size, CalcItemWidth(), default_h);
+
+    const ImVec2 frame_min = window->DC.CursorPos;
+    const ImRect frame_bb(frame_min, frame_min + frame_size);
+    const ImRect total_bb(frame_min, frame_bb.Max + ImVec2(label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f, 0.0f));
+
+    ItemSize(total_bb, style.FramePadding.y);
+    if (!ItemAdd(total_bb, box_id, &frame_bb))
+    {
+        PopID();
+        return false;
+    }
+
+    // Interaction: behave like any widget. ButtonBehavior takes ActiveId on press, so a drag
+    // started on the box does NOT move the node (you grab the node body/title instead).
+    bool hovered;
+    bool pressed = ButtonBehavior(frame_bb, box_id, &hovered, NULL);
+    if (hovered)
+        SetMouseCursor(ImGuiMouseCursor_TextInput);
+    // Open the popup on a click, but not when the press turned into a drag (e.g. dragging an
+    // external resize grip placed over the box) - otherwise the editor would pop open on resize.
+    if (pressed && !IsMouseDragPastThreshold(0))
+    {
+        SuspendCanvasIfNoHook suspend;
+        OpenPopup("##ml_edit");
+    }
+
+    // The popup being open means "edited elsewhere": keep the box highlighted and fade its
+    // text, so the link between the box and the popup stays obvious.
+    const bool editing = IsPopupOpen("##ml_edit");
+    const bool highlight = hovered || editing;
+
+    // Frame background + border. On highlight, blend FrameBg -> FrameBgHovered (theme-aware, subtle).
+    const ImU32 frame_col = highlight
+        ? GetColorU32(ImLerp(style.Colors[ImGuiCol_FrameBg], style.Colors[ImGuiCol_FrameBgHovered], 0.25f))
+        : GetColorU32(ImGuiCol_FrameBg);
+# if IMGUI_VERSION_NUM >= 19140
+    RenderNavCursor(frame_bb, box_id);
+# else
+    RenderNavHighlight(frame_bb, box_id);
+# endif
+    RenderFrame(frame_bb.Min, frame_bb.Max, frame_col, true, style.FrameRounding);
+
+    // Draw the text, clipped to the inner area (no word-wrap, like the real widget).
+    const ImRect inner_bb(frame_bb.Min + style.FramePadding, frame_bb.Max - style.FramePadding);
+    const float line_h = g.FontSize;
+    const ImU32 text_col = GetColorU32(ImGuiCol_Text, editing ? 0.5f : 1.0f);
+    const char* text_end = buf + strlen(buf);
+    window->DrawList->PushClipRect(inner_bb.Min, inner_bb.Max, true);
+    {
+        const char* s = buf;
+        ImVec2 pos = inner_bb.Min;
+        int n_lines = 0;
+        bool horiz_overflow = false;
+        while (s <= text_end)
+        {
+            const char* line_end = strchr(s, '\n');
+            if (line_end == NULL)
+                line_end = text_end;
+            if (pos.y > inner_bb.Max.y) // stop drawing once below the visible area
+                { n_lines++; break; }
+            window->DrawList->AddText(pos, text_col, s, line_end);
+            if (CalcTextSize(s, line_end).x > inner_bb.GetWidth())
+                horiz_overflow = true;
+            pos.y += line_h;
+            n_lines++;
+            if (line_end == text_end)
+                break;
+            s = line_end + 1;
+        }
+
+        // Overflow hints: fade the box fill back in along each clipped edge.
+        const ImU32 c_transp = frame_col & ~IM_COL32_A_MASK;
+        if ((float)n_lines * line_h > inner_bb.GetHeight() + 1.0f)
+        {
+            const float fade_h = ImMin(line_h, inner_bb.GetHeight());
+            window->DrawList->AddRectFilledMultiColor(
+                ImVec2(frame_bb.Min.x, frame_bb.Max.y - fade_h), frame_bb.Max,
+                c_transp, c_transp, frame_col, frame_col);
+        }
+        if (horiz_overflow)
+        {
+            const float fade_w = ImMin(line_h * 1.5f, inner_bb.GetWidth());
+            window->DrawList->AddRectFilledMultiColor(
+                ImVec2(frame_bb.Max.x - fade_w, frame_bb.Min.y), frame_bb.Max,
+                c_transp, frame_col, frame_col, c_transp);
+        }
+    }
+    window->DrawList->PopClipRect();
+
+    // Label, to the right of the frame (rendered up to "##", like the real widget).
+    if (label_size.x > 0.0f)
+    {
+        const char* label_end = FindRenderedTextEnd(label);
+        RenderText(ImVec2(frame_bb.Max.x + style.ItemInnerSpacing.x, frame_bb.Min.y + style.FramePadding.y), label, label_end);
+    }
+
+    // Popup with the real editor. The popup is outside the canvas, so its child window works
+    // (iff the node-editor popup patches are applied:
+    //  https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-1681806764
+    //  https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-2404714757 ).
+    // We use BeginPopupEx (not BeginPopup, which forces AlwaysAutoResize) so the popup is
+    // resizable: it opens at the requested size, then keeps its own resized size across reopens.
+    // Resizing the popup does NOT change the read-only preview box.
+    // There is no infinite recursion: inside the popup we are no longer in the canvas.
+    bool changed = false;
+    {
+        SuspendCanvasIfNoHook suspend;
+        const ImGuiID popup_id = GetID("##ml_edit");
+        SetNextWindowSize(frame_size + style.WindowPadding * 2.0f, ImGuiCond_FirstUseEver);
+        if (BeginPopupEx(popup_id, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings))
+        {
+            if (InputTextMultiline("##edit", buf, buf_size, GetContentRegionAvail(), flags, callback, user_data))
+                changed = true;
+            EndPopup();
+        }
+    }
+
+    PopID();
+    return changed;
 }

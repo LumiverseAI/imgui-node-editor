@@ -1,6 +1,4 @@
 //------------------------------------------------------------------------------
-// VERSION 0.9.1
-//
 // LICENSE
 //   This software is dual-licensed to the public domain and under the following
 //   license: you are granted a perpetual, irrevocable license to copy, modify,
@@ -114,7 +112,21 @@ static inline float& ImFringeScaleRef(ImDrawList* drawList)
 
 struct FringeScaleScope
 {
+# if IMGUI_VERSION_NUM >= 19292
+    FringeScaleScope(float scale)
+        : m_LastPixelDensity(ImGui::GetWindowDrawList()->_InvFringeScale)
+    {
+        ImGui::GetWindowDrawList()->_SetPixelDensity(1.0f / scale);
+    }
 
+    ~FringeScaleScope()
+    {
+        ImGui::GetWindowDrawList()->_SetPixelDensity(m_LastPixelDensity);
+    }
+
+private:
+    float m_LastPixelDensity;
+# else
     FringeScaleScope(float scale)
         : m_LastFringeScale(ImFringeScaleRef(ImGui::GetWindowDrawList()))
     {
@@ -128,6 +140,7 @@ struct FringeScaleScope
 
 private:
     float m_LastFringeScale;
+# endif
 };
 
 
@@ -456,9 +469,10 @@ enum LinkPathType {
     LinkPathType_Under_Under
 };
 
+// The path of a link: one curve, or (angled links) rounded corners joined by straight segments
 struct LinkPath {
-    ImVec2 m_Points[16];
-    int m_NumPoint;
+    ImCubicBezierPoints m_Segments[7];
+    int m_SegmentCount;
     LinkPathType m_Type;
 };
 
@@ -494,13 +508,17 @@ struct Link final: Object
 
     void UpdateEndpoints();
 
+    ImCubicBezierPoints GetCurve() const;
     LinkPathType GetPathType(ImRect& fromRect, ImRect& toRect) const;
-    LinkPath GetCurve() const;
+    LinkPath GetPath() const;
 
     virtual bool TestHit(const ImVec2& point, float extraThickness = 0.0f) const override final;
     virtual bool TestHit(const ImRect& rect, bool allowIntersect = true) const override final;
 
     virtual ImRect GetBounds() const override final;
+
+    // The curve and the axes of its arrows.
+    ImRect GetCurveBounds() const;
 
     virtual Link* AsLink() override final { return this; }
 };
@@ -749,7 +767,6 @@ private:
     ImVec2 SamplePath(float distance) const;
 
     void OnUpdate(float progress) override final;
-    void OnStop() override final;
 };
 
 struct AnimationController
@@ -769,6 +786,8 @@ struct AnimationController
     {
         IM_UNUSED(drawList);
     }
+
+    virtual void ForgetDeletedObjects() {} // objects marked for deletion are freed right after this call
 };
 
 struct FlowAnimationController final : AnimationController
@@ -777,10 +796,11 @@ struct FlowAnimationController final : AnimationController
     virtual ~FlowAnimationController();
 
     void Flow(Link* link, FlowDirection direction = FlowDirection::Forward);
+    void Remove(Link* link);
 
     virtual void Draw(ImDrawList* drawList) override final;
 
-    void Release(FlowAnimation* animation);
+    virtual void ForgetDeletedObjects() override final;
 
 private:
     FlowAnimation* GetOrCreate(Link* link);
@@ -811,6 +831,8 @@ struct EditorAction
     virtual bool IsDragging() { return false; }
 
     virtual void ShowMetrics() {}
+
+    virtual void ForgetDeletedObjects() {} // objects marked for deletion are freed right after this call
 
     virtual NavigateAction*     AsNavigate()     { return nullptr; }
     virtual SizeAction*         AsSize()         { return nullptr; }
@@ -859,6 +881,8 @@ struct NavigateAction final: EditorAction
 
     virtual void ShowMetrics() override final;
 
+    virtual void ForgetDeletedObjects() override final;
+
     virtual NavigateAction* AsNavigate() override final { return this; }
 
     void NavigateTo(const ImRect& bounds, ZoomMode zoomMode, float duration = -1.0f, NavigationReason reason = NavigationReason::Unknown);
@@ -880,6 +904,8 @@ struct NavigateAction final: EditorAction
 
     void SetViewRect(const ImRect& rect);
     ImRect GetViewRect() const;
+
+    void ClampZoom();
 
 private:
     ImGuiEx::Canvas&   m_Canvas;
@@ -926,6 +952,8 @@ struct SizeAction final: EditorAction
 
     virtual void ShowMetrics() override final;
 
+    virtual void ForgetDeletedObjects() override final;
+
     virtual SizeAction* AsSize() override final { return this; }
 
     virtual bool IsDragging() override final { return m_IsActive; }
@@ -936,11 +964,11 @@ private:
     NodeRegion GetRegion(Node* node);
     ImGuiMouseCursor ChooseCursor(NodeRegion region);
 
+    ImVec2           m_StartPoint;   // in canvas space
     ImRect           m_StartBounds;
     ImRect           m_StartGroupBounds;
     ImVec2           m_LastSize;
     ImVec2           m_MinimumSize;
-    ImVec2           m_LastDragOffset;
     ed::NodeRegion   m_Pivot;
     ImGuiMouseCursor m_Cursor;
 };
@@ -951,6 +979,7 @@ struct DragAction final: EditorAction
     bool            m_Clear;
     Object*         m_DraggedObject;
     vector<Object*> m_Objects;
+    ImVec2          m_StartPoint;   // in canvas space
 
     DragAction(EditorContext* editor);
 
@@ -964,6 +993,8 @@ struct DragAction final: EditorAction
     virtual bool IsDragging() override final { return m_IsActive; }
 
     virtual void ShowMetrics() override final;
+
+    virtual void ForgetDeletedObjects() override final;
 
     virtual DragAction* AsDrag() override final { return this; }
 };
@@ -990,6 +1021,8 @@ struct SelectAction final: EditorAction
     virtual bool Process(const Control& control) override final;
 
     virtual void ShowMetrics() override final;
+
+    virtual void ForgetDeletedObjects() override final;
 
     virtual bool IsDragging() override final { return m_IsActive; }
 
@@ -1042,6 +1075,8 @@ struct ShortcutAction final: EditorAction
     virtual void Reject() override final;
 
     virtual void ShowMetrics() override final;
+
+    virtual void ForgetDeletedObjects() override final;
 
     virtual ShortcutAction* AsCutCopyPaste() override final { return this; }
 
@@ -1113,6 +1148,8 @@ struct CreateItemAction final : EditorAction
 
     virtual void ShowMetrics() override final;
 
+    virtual void ForgetDeletedObjects() override final;
+
     virtual bool IsDragging() override final { return m_IsActive; }
 
     virtual CreateItemAction* AsCreateItem() override final { return this; }
@@ -1152,6 +1189,8 @@ struct DeleteItemsAction final: EditorAction
 
     virtual void ShowMetrics() override final;
 
+    virtual void ForgetDeletedObjects() override final;
+
     virtual DeleteItemsAction* AsDeleteItems() override final { return this; }
 
     bool Add(Object* object);
@@ -1167,7 +1206,6 @@ struct DeleteItemsAction final: EditorAction
 
 private:
     enum IteratorType { Unknown, Link, Node };
-    enum UserAction { Undetermined, Accepted, Rejected };
 
     void DeleteDeadLinks(NodeId nodeId);
     void DeleteDeadPins(NodeId nodeId);
@@ -1179,7 +1217,7 @@ private:
     vector<Object*> m_ManuallyDeletedObjects;
 
     IteratorType    m_CurrentItemType;
-    UserAction      m_UserAction;
+    bool            m_HasCurrentItem; // returned by a query, and neither accepted nor rejected yet
     vector<Object*> m_CandidateObjects;
     int             m_CandidateItemIndex;
 };
@@ -1192,6 +1230,7 @@ struct NodeBuilder
     Pin*  m_CurrentPin;
 
     ImRect m_NodeRect;
+    ImVec4 m_NodePadding;
 
     ImRect m_PivotRect;
     ImVec2 m_PivotAlignment;
@@ -1206,10 +1245,12 @@ struct NodeBuilder
     ImDrawListSplitter m_Splitter;
     ImDrawListSplitter m_PinSplitter;
 
-    // Used by Begin/End to suppress hover claims from widgets in a node that
-    // is currently covered by another node under the cursor (see Begin()).
-    bool      m_HoverSuppressionActive;
-    ImGuiID   m_SavedHoveredId;
+    bool    m_IsHoverBlocked;
+    ImGuiID m_BlockedHoveredId;
+
+    // Misnested nodes and pins, whose End calls are ignored too.
+    int m_IgnoredNodes;
+    int m_IgnoredPins;
 
     NodeBuilder(EditorContext* editor);
     ~NodeBuilder();
@@ -1228,7 +1269,6 @@ struct NodeBuilder
 
     void Group(const ImVec2& size);
 
-    ImDrawList* GetUserBackgroundDrawList() const;
     ImDrawList* GetUserBackgroundDrawList(Node* node) const;
 };
 
@@ -1261,6 +1301,9 @@ struct Style: ax::NodeEditor::Style
     void PushVar(StyleVar varIndex, const ImVec2& value);
     void PushVar(StyleVar varIndex, const ImVec4& value);
     void PopVar(int count = 1);
+
+    int GetColorStackSize() const { return static_cast<int>(m_ColorStack.size()); }
+    int GetVarStackSize()   const { return static_cast<int>(m_VarStack.size()); }
 
     const char* GetColorName(StyleColor colorIndex) const;
 
@@ -1360,17 +1403,13 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     bool IsAnyNodeSelected();
     bool IsAnyLinkSelected();
     bool HasSelectionChanged();
+    bool HasSelectionChangedSinceBegin() const;
     uint64_t GetSelectionId() const { return m_SelectionId; }
 
     Node* FindNodeAt(const ImVec2& p);
     void FindNodesInRect(const ImRect& r, vector<Node*>& result, bool append = false, bool includeIntersecting = true);
     void FindLinksInRect(const ImRect& r, vector<Link*>& result, bool append = false);
-
-    // True if any node drawn on top of `node` contains `p`
-    // (`p` is in the same coordinate space as Node::m_Bounds).
-    // Drawing order follows m_Nodes after Z-sort, so we only need to scan
-    // the suffix that follows `node` in m_Nodes.
-    bool IsNodeObscuredAt(Node* node, const ImVec2& p) const;
+    bool IsNodeCoveredAt(Node* node, const ImVec2& p) const; // by a node drawn above it
 
     bool HasAnyLinks(NodeId nodeId) const;
     bool HasAnyLinks(PinId pinId) const;
@@ -1388,15 +1427,21 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     void NotifyLinkDeleted(Link* link);
 
     void Suspend(SuspendFlags flags = SuspendFlags::None);
-    void Resume(SuspendFlags flags = SuspendFlags::None);
+    void Resume();
     bool IsSuspended();
 
     bool IsFocused();
     bool IsHovered() const;
     bool IsHoveredWithoutOverlapp() const;
+    bool OwnsNavigateButton() const; // the press of the navigate button was taken by the editor's background
     bool CanAcceptUserInput() const;
 
-    // This is *specific* to ImGui Bundle
+    // True for a frame whose host window skips items. Item rectangles are stale
+    // then, so nothing is measured, interacted with or saved.
+    bool IsFrozen() const { return m_IsFrozen; }
+
+    // The editor ignores the mouse and the keyboard until the next Begin(): no pan, zoom, selection, drag, shortcut.
+    // Call it when a widget inside a node uses the mouse itself (e.g. a plot which is dragged or zoomed with the wheel).
     void DisableUserInputThisFrame();
 
     void MakeDirty(SaveReasonFlags reason);
@@ -1503,7 +1548,10 @@ struct IMGUI_NODE_EDITOR_API EditorContext
 
 private:
     void LoadSettings();
+    void RestoreView();
     void SaveSettings();
+
+    void ForgetDeletedObjects();
 
     Control BuildControl(bool allowOffscreen);
 
@@ -1515,14 +1563,19 @@ private:
 
     ImGuiID             m_EditorActiveId;
     bool                m_IsFirstFrame;
+    bool                m_IsFrozen;
     bool                m_IsFocused;
     bool                m_IsHovered;
     bool                m_IsHoveredWithoutOverlapp;
-    bool                m_EnableUserInput;  // Specific to ImGui Bundle. When false, discard all user inputs
+    ImGuiID             m_BackgroundId = 0;
+    bool                m_IsNavigatePressInside = false; // the navigate button was pressed inside the editor, on no item that owns it
+    bool                m_EnableUserInput;  // When false, discard all user inputs (see DisableUserInputThisFrame())
 
     bool                m_ShortcutsEnabled;
 
     Style               m_Style;
+    int                 m_BeginColorStackSize;
+    int                 m_BeginVarStackSize;
 
     vector<ObjectWrapper<Node>> m_Nodes;
     vector<ObjectWrapper<Pin>>  m_Pins;
@@ -1532,6 +1585,7 @@ private:
 
     vector<Object*>     m_LastSelectedObjects;
     uint64_t            m_SelectionId;
+    bool                m_SelectionChangedBeforeBegin;
 
     Link*               m_LastActiveLink;
 
@@ -1540,6 +1594,8 @@ private:
 
     ImGuiEx::Canvas     m_Canvas;
     bool                m_IsCanvasVisible;
+    int                 m_SuspendCounter;
+    SuspendFlags        m_SuspendFlags;
 
     NodeBuilder         m_NodeBuilder;
     HintBuilder         m_HintBuilder;
@@ -1566,6 +1622,7 @@ private:
     int                 m_BackgroundClickButtonIndex;
     int                 m_BackgroundDoubleClickButtonIndex;
 
+    bool                m_IsSettingsLoaded;
     bool                m_IsInitialized;
     Settings            m_Settings;
 

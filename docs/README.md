@@ -1,6 +1,12 @@
 # Node Editor in ImGui
 
-[![build](https://github.com/thedmd/imgui-node-editor/actions/workflows/build.yml/badge.svg)](https://github.com/thedmd/imgui-node-editor/actions/workflows/build.yml)
+[![tests](https://github.com/pthom/imgui-node-editor/actions/workflows/tests.yml/badge.svg?branch=imgui_bundle)](https://github.com/pthom/imgui-node-editor/actions/workflows/tests.yml)
+
+> **This is the fork used by [Dear ImGui Bundle](https://github.com/pthom/imgui_bundle).** It can be used without it.
+> See [what this fork adds](fork_imgui_bundle.md): popups, combos and multiline text inside nodes, node width, fixes, automated tests.
+>
+> The `imgui_bundle` branch is **rebased** when upstream moves (its history is rewritten): pin a tag (`bundle_YYYYMMDD`) or a commit
+> rather than tracking the branch.
 
 ## About
 
@@ -86,11 +92,15 @@ Keyboard shortcuts only fire when `AreShortcutsEnabled()` returns `true`.
 
 ## Dependencies
 
- * Vanilla ImGui 1.72+
+ * Dear ImGui 1.80 or newer, tested up to 1.93.0 WIP
  * C++14
 
 ### Dependencies for examples:
- * https://github.com/thedmd/imgui/tree/feature/layout (used in blueprints sample only)
+
+ * [thedmd/imgui feature/layout-external](https://github.com/thedmd/imgui/tree/feature/layout-external) (Dear ImGui 1.93.0 WIP with Stack Layout, used in blueprints sample)
+ * stb, and GLFW on macOS, Linux, and Windows with the GLFW backend
+
+CMake fetches all of them at revisions pinned in [examples/cmake](../examples/cmake). An installed GLFW package is used when found.
 
 ### Optional extension you can pull into your local copy of ImGui node editor can take advantage of:
  * ~~https://github.com/thedmd/imgui/tree/feature/draw-list-fringe-scale (for sharp rendering, while zooming)~~ It is part of ImGui since 1.80 release
@@ -101,21 +111,33 @@ Keyboard shortcuts only fire when `AreShortcutsEnabled()` returns `true`.
 Node Editor sources are located in root project directory. To use it, simply copy&paste sources into your project. Exactly like you can do with ImGui.
 
 ### Examples
-[Examples](../examples) can be build with CMake:
+[Examples](../examples) can be built with CMake 3.24 or newer:
 ```
-Windows:
-    cmake -S examples -B build -G "Visual Studio 17 2022"
-
-macOS:
-    cmake -S examples -B build -G "Xcode"
-
-Linux:
-    cmake -S examples -B build -G "Unix Makefiles"
-
-Build:
-    cmake --build build --config Release
+cmake -S examples -B build
+cmake --build build --config Release
 ```
-Executables will be located in `build\bin` directory.
+CMake uses the platform's default generator; `-G Ninja` or `-G Xcode` picks another. The executables are in `build/bin`. They find their data next to them, so they can be started from any directory.
+
+On Windows the examples use Win32 and DirectX 11. `-DIMGUI_NODE_EDITOR_EXAMPLES_BACKEND=glfw -DIMGUI_NODE_EDITOR_EXAMPLES_RENDERER=opengl3` builds them with GLFW and OpenGL instead.
+
+On Linux, GLFW needs the X11, Wayland and OpenGL development packages, for example on Ubuntu:
+```
+sudo apt-get install libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev libwayland-dev libxkbcommon-dev libgl1-mesa-dev
+```
+On macOS, the Xcode command line tools are enough.
+
+To build offline or against a local checkout of a dependency, point FetchContent at it, for example `-DFETCHCONTENT_SOURCE_DIR_IMGUI=<path>`. `FETCHCONTENT_SOURCE_DIR_STB` and `FETCHCONTENT_SOURCE_DIR_GLFW` work the same way.
+
+### Tests
+The headless [test suite](../tests) runs with CTest:
+```
+cmake -S tests -B build-tests
+cmake --build build-tests --config Debug
+ctest --test-dir build-tests -C Debug
+```
+`-DIMGUI_DIR=<path>` tests against another copy of Dear ImGui. The suite needs 1.89 or newer; with an older one only a compatibility test is built, which drives the editor with any Dear ImGui from 1.80. `-DIMGUI_NODE_EDITOR_TESTS_SANITIZE=ON` builds with AddressSanitizer and adds the tests that detect memory errors. Tests of open issues are expected to fail until the issue is fixed.
+
+`python tests/imgui_walk.py --imgui-repo <clone of Dear ImGui> --work <directory>` runs the tests against every Dear ImGui release from 1.80 on, and accepts `-strict` and docking variants of revisions.
 
 ### Quick Start
 
@@ -137,8 +159,10 @@ struct Example:
 
     void OnStart() override
     {
+        m_SettingsFile = ResolvePath("Simple.json");
+
         ed::Config config;
-        config.SettingsFile = "Simple.json";
+        config.SettingsFile = m_SettingsFile.c_str();
         m_Context = ed::CreateEditor(&config);
     }
 
@@ -149,6 +173,8 @@ struct Example:
 
     void OnFrame(float deltaTime) override
     {
+        IM_UNUSED(deltaTime);
+
         auto& io = ImGui::GetIO();
 
         ImGui::Text("FPS: %.2f (%.2gms)", io.Framerate, io.Framerate ? 1000.0f / io.Framerate : 0.0f);
@@ -175,17 +201,18 @@ struct Example:
         //ImGui::ShowMetricsWindow();
     }
 
+    std::string        m_SettingsFile;
     ed::EditorContext* m_Context = nullptr;
 };
 
 int Main(int argc, char** argv)
 {
-    Example exampe("Simple", argc, argv);
+    Example example("Simple", argc, argv);
 
-    if (exampe.Create())
-        return exampe.Run();
+    if (example.Create())
+        return example.Run();
 
-    return 0;
+    return 1;
 }
 ```
 

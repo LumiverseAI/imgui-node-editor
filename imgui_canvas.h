@@ -59,22 +59,39 @@ namespace ImGuiEx {
 
 struct CanvasView
 {
-    ImVec2 Origin;
-    float  Scale  = 1.0f;
-    float  InvScale = 1.0f;
-
     CanvasView() = default;
     CanvasView(const ImVec2& origin, float scale)
-        : Origin(origin)
-        , Scale(scale)
-        , InvScale(scale ? 1.0f / scale : 0.0f)
+        : m_Origin(origin)
     {
+        SetScale(scale);
     }
 
     void Set(const ImVec2& origin, float scale)
     {
         *this = CanvasView(origin, scale);
     }
+
+    const ImVec2& Origin()   const { return m_Origin; }
+    float         Scale()    const { return m_Scale; }
+    float         InvScale() const { return m_InvScale; }
+
+    void SetOrigin(const ImVec2& origin) { m_Origin = origin; }
+
+    // Scale must be positive and finite; any other is ignored.
+    void SetScale(float scale)
+    {
+        IM_ASSERT(scale > 0.0f && scale <= FLT_MAX && "Canvas view scale must be positive and finite.");
+        if (!(scale > 0.0f && scale <= FLT_MAX))
+            return;
+
+        m_Scale    = scale;
+        m_InvScale = 1.0f / scale;
+    }
+
+private:
+    ImVec2 m_Origin;
+    float  m_Scale    = 1.0f;
+    float  m_InvScale = 1.0f;
 };
 
 // Canvas widget represent view over infinite plane.
@@ -96,11 +113,14 @@ struct CanvasView
 //     call canvas functions from same channel.
 struct Canvas
 {
+    // A canvas destroyed while Dear ImGui still points to it (a throwing IM_ASSERT left Begin() without End())
+    // removes itself from the context: the next ImGui::Begin() would call into freed memory
+    ~Canvas();
+
     // Begins drawing content of canvas plane.
     //
-    // When false is returned that mean canvas is not visible to the
-    // user can drawing should be skipped and End() not called.
-    // When true is returned drawing must be ended with call to End().
+    // Returns true, and drawing must be ended with call to End(). A canvas
+    // out of view clips its content away; check IsVisible() to skip it.
     //
     // If any size component is equal to zero or less canvas will
     // automatically expand to all available area on that axis.
@@ -117,6 +137,12 @@ struct Canvas
     //
     // Must be called only when Begin() retuned true.
     IMGUIEX_CANVAS_API void End();
+
+    // Returns true if any part of the canvas is visible.
+    //
+    // Note:
+    //     Valid after call to Begin().
+    bool IsVisible() const { return m_IsVisible; }
 
     // Sets visible region of canvas plane.
     //
@@ -153,6 +179,10 @@ struct Canvas
     IMGUIEX_CANVAS_API void Suspend();
     IMGUIEX_CANVAS_API void Resume();
 
+    // Functions called instead of Suspend() / Resume() when a window begins / ends inside the canvas
+    // (with ImGuiContext::BeginWindowCallback / EndWindowCallback). For a host that suspends itself around the canvas.
+    IMGUIEX_CANVAS_API void SetWindowSuspendHandlers(void (*suspend)(void* userData), void (*resume)(void* userData), void* userData);
+
     // Transforms point from canvas plane to ImGui.
     IMGUIEX_CANVAS_API ImVec2 FromLocal(const ImVec2& point) const;
     IMGUIEX_CANVAS_API ImVec2 FromLocal(const ImVec2& point, const CanvasView& view) const;
@@ -188,10 +218,10 @@ struct Canvas
     //
     // Origin is an offset of infinite plane origin from top left
     // corner of the canvas.
-    const ImVec2& ViewOrigin()  const { return m_View.Origin; }
+    const ImVec2& ViewOrigin()  const { return m_View.Origin(); }
 
     // Returns scale of the view.
-    float ViewScale() const { return m_View.Scale; }
+    float ViewScale() const { return m_View.Scale(); }
 
     // Returns true if canvas is suspended.
     //
@@ -211,6 +241,7 @@ private:
     };
 # endif
 
+    ImVec2 CalcViewTransformPosition(const CanvasView& view) const;
     void UpdateViewTransformPosition();
 
     void SaveInputState();
@@ -223,19 +254,27 @@ private:
     void LeaveLocalSpace();
 
     bool m_InBeginEnd = false;
+    bool m_IsVisible = false;
 
     ImVec2 m_WidgetPosition;
     ImVec2 m_WidgetSize;
     ImRect m_WidgetRect;
 
+    ImGuiWindow* m_Window = nullptr;
     ImDrawList* m_DrawList = nullptr;
     int m_ExpectedChannel = 0;
+    int m_ClipRectStackSize = 0;
+    ImVector<ImVec4> m_SuspendedClipRects;
+    ImVec4 m_ScreenClipRect;
+    ImVec4 m_LocalClipRect;
 
 # if IMGUI_EX_CANVAS_DEFERED()
     ImVector<Range> m_Ranges;
     Range* m_CurrentRange = nullptr;
 # endif
 
+    int m_DrawListFirstCommandIndex = 0;
+    int m_DrawListCommadBufferSize = 0;
     int m_DrawListStartVertexIndex = 0;
 
     CanvasView  m_View;
@@ -245,27 +284,68 @@ private:
 
     int m_SuspendCounter = 0;
 
+# if IMGUI_VERSION_NUM >= 19292
+    float m_LastPixelDensity = 1.0f;
+# else
     float m_LastFringeScale = 1.0f;
+    float m_LastCurveTessellationTol = 1.25f;
+# endif
 
     ImVec2 m_MousePosBackup;
     ImVec2 m_MousePosPrevBackup;
+    ImVec2 m_MouseDeltaBackup;
+    ImVec2 m_ImeInputPosBackup;
     ImVec2 m_MouseClickedPosBackup[IM_ARRAYSIZE(ImGuiIO::MouseClickedPos)];
     ImVec2 m_WindowCursorMaxBackup;
+    ImVec2 m_WindowIdealMaxBackup;
+    ImVec2 m_WindowPosBackup;
+    float  m_WindowIndentBackup = 0.0f;
+    float  m_WindowColumnsOffsetBackup = 0.0f;
+    float  m_WindowGroupOffsetBackup = 0.0f;
+    ImRect m_WindowWorkRectBackup;
+    ImRect m_WindowContentRegionRectBackup;
+    float  m_LocalIndent = 0.0f;
+    float  m_LocalColumnsOffset = 0.0f;
+    float  m_LocalGroupOffset = 0.0f;
+    ImRect m_LocalWorkRect;
+    ImRect m_LocalContentRegionRect;
 
 # if defined(IMGUI_HAS_VIEWPORT)
-    ImVec2 m_WindowPosBackup;
     ImVec2 m_ViewportPosBackup;
     ImVec2 m_ViewportSizeBackup;
+# if IMGUI_VERSION_NUM > 18002
     ImVec2 m_ViewportWorkPosBackup;
     ImVec2 m_ViewportWorkSizeBackup;
+# else
+    ImVec2 m_ViewportWorkOffsetMinBackup;
+    ImVec2 m_ViewportWorkOffsetMaxBackup;
+# endif
 # endif
 
-    // [ADAPT_IMGUI_BUNDLE]: added ImGuiContextHookType_BeginWindow, ImGuiContextHookType_EndWindow, cf https://github.com/thedmd/imgui-node-editor/issues/242#issuecomment-1681806764
-    ImGuiID m_beginWindowHook, m_endWindowHook;
+    // Dear ImGui's callbacks that suspend the canvas when a window is begun from inside it (see Begin())
+# if defined(IMGUI_HAS_BEGIN_END_WINDOW_CALLBACKS)
+    ImGuiBeginEndWindowCallback m_PreviousBeginWindowCallback = nullptr; // Restored by End(): a canvas may be inside a popup of another one
+    ImGuiBeginEndWindowCallback m_PreviousEndWindowCallback = nullptr;
+    void* m_PreviousBeginEndWindowCallbackUserData = nullptr;
     ImVec2 m_BeginWindowCursorBackup;
     int m_BeginWindowDepth = 0;
-    // [/ADAPT_IMGUI_BUNDLE]
-    };
+# endif
+    void (*m_WindowSuspendHandler)(void* userData) = nullptr;
+    void (*m_WindowResumeHandler)(void* userData) = nullptr;
+    void* m_WindowSuspendHandlersUserData = nullptr;
+};
+
+// True while a canvas is active: between Canvas::Begin() and Canvas::End(), except while it is suspended.
+// Positions are then in canvas space (not in screen space), and child windows cannot be used.
+bool IsInsideCanvas();
+
+// InputTextMultiline() for the inside of a canvas.
+// ImGui::InputTextMultiline() uses a child window, and child windows do not work inside a canvas. This version shows a read-only
+// preview box with the requested size, and opens a resizable popup that hosts the real editor when the box is clicked.
+// Outside of a canvas, it calls ImGui::InputTextMultiline().
+// If Dear ImGui provides ImGuiContext::InputTextMultilineOverride (see IMGUI_HAS_INPUT_TEXT_MULTILINE_OVERRIDE), the canvas
+// installs this function as the override while it is active: ImGui::InputTextMultiline() then works unchanged inside a canvas.
+bool CanvasInputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size = ImVec2(0, 0), ImGuiInputTextFlags flags = 0, ImGuiInputTextCallback callback = NULL, void* user_data = NULL);
 
 } // namespace ImGuiEx
 

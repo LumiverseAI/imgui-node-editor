@@ -1,6 +1,4 @@
 //------------------------------------------------------------------------------
-// VERSION 0.9.1
-//
 // LICENSE
 //   This software is dual-licensed to the public domain and under the following
 //   license: you are granted a perpetual, irrevocable license to copy, modify,
@@ -31,12 +29,12 @@ inline bool operator!=(const ImVec2& lhs, const ImVec2& rhs)
 }
 # endif
 
-#if IMGUI_VERSION_NUM < 19270
+# if IMGUI_VERSION_NUM < 19268
 inline ImVec2 operator*(const float lhs, const ImVec2& rhs)
 {
     return ImVec2(lhs * rhs.x, lhs * rhs.y);
 }
-#endif
+# endif
 
 # if IMGUI_VERSION_NUM < 18955
 inline ImVec2 operator-(const ImVec2& lhs)
@@ -49,7 +47,7 @@ inline ImVec2 operator-(const ImVec2& lhs)
 //------------------------------------------------------------------------------
 inline float ImLength(float v)
 {
-    return v;
+    return ImFabs(v);
 }
 
 inline float ImLength(const ImVec2& v)
@@ -82,10 +80,29 @@ inline ImVec2 ImRect_ClosestPoint(const ImRect& rect, const ImVec2& p, bool snap
     if (!snap_to_edge && rect.Contains(p))
         return p;
 
-    return ImVec2(
+    auto result = ImVec2(
         (p.x > rect.Max.x) ? rect.Max.x : (p.x < rect.Min.x ? rect.Min.x : p.x),
         (p.y > rect.Max.y) ? rect.Max.y : (p.y < rect.Min.y ? rect.Min.y : p.y)
     );
+
+    if (snap_to_edge && result.x == p.x && result.y == p.y)
+    {
+        const auto left    = p.x - rect.Min.x;
+        const auto right   = rect.Max.x - p.x;
+        const auto top     = p.y - rect.Min.y;
+        const auto bottom  = rect.Max.y - p.y;
+        const auto closest = ImMin(ImMin(left, right), ImMin(top, bottom));
+        if (closest == left)
+            result.x = rect.Min.x;
+        else if (closest == right)
+            result.x = rect.Max.x;
+        else if (closest == top)
+            result.y = rect.Min.y;
+        else
+            result.y = rect.Max.y;
+    }
+
+    return result;
 }
 
 inline ImVec2 ImRect_ClosestPoint(const ImRect& rect, const ImVec2& p, bool snap_to_edge, float radius)
@@ -165,10 +182,8 @@ inline ImLine ImRect_ClosestLine(const ImRect& rect_a, const ImRect& rect_b, flo
     if (radius_a == 0 && radius_b == 0)
         return line;
 
-    const auto offset      = line.B - line.A;
-    const auto length_sq   = offset.x * offset.x + offset.y * offset.y;
-    const auto radius_a_sq = radius_a * radius_a;
-    const auto radius_b_sq = radius_b * radius_b;
+    const auto offset    = line.B - line.A;
+    const auto length_sq = offset.x * offset.x + offset.y * offset.y;
 
     if (length_sq <= 0)
         return line;
@@ -176,8 +191,7 @@ inline ImLine ImRect_ClosestLine(const ImRect& rect_a, const ImRect& rect_b, flo
     const auto length    = ImSqrt(length_sq);
     const auto direction = ImVec2(offset.x / length, offset.y / length);
 
-    const auto total_radius_sq = radius_a_sq + radius_b_sq;
-    if (total_radius_sq > length_sq)
+    if (radius_a + radius_b > length)
     {
         const auto scale = length / (radius_a + radius_b);
         radius_a *= scale;
