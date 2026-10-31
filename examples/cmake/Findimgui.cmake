@@ -3,8 +3,8 @@ include(FetchContent)
 if (NOT TARGET imgui)
     FetchContent_Declare(
         imgui
-        GIT_REPOSITORY      https://github.com/thedmd/imgui.git
-        GIT_TAG             b085dd8feac1595915d85243b5515af34a10a394 # tag layout-external-v2.1: Dear ImGui 1.93.0 WIP with Stack Layout v2.1
+        GIT_REPOSITORY      https://github.com/pthom/imgui.git
+        GIT_TAG             ce5a44c49a34ff677f8bab16e1d4e62ee1e31c04 # Dear ImGui 1.93.0 WIP with docking and Stack Layout; matches lumengine_imgui_bundle
     )
 
     FetchContent_MakeAvailable(imgui)
