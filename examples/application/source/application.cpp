@@ -67,8 +67,7 @@ static void ShowError(const std::string& title, const char* message)
 # endif
 }
 
-// Relative paths are relative to the base directory, not to the working directory.
-static std::string ResolvePath(const std::string& path)
+std::string Application::ResolvePath(const std::string& path)
 {
     static const auto base = GetBaseDirectory();
     const auto isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' || (path.size() > 1 && path[1] == ':'));

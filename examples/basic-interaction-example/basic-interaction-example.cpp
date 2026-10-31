@@ -23,8 +23,11 @@ struct Example:
 
     void OnStart() override
     {
-        ed::InstallSettingsHandler();
-        m_Context = ed::CreateEditor();
+        m_SettingsFile = ResolvePath("BasicInteraction.json");
+
+        ed::Config config;
+        config.SettingsFile = m_SettingsFile.c_str();
+        m_Context = ed::CreateEditor(&config);
     }
 
     void OnStop() override
@@ -164,8 +167,8 @@ struct Example:
                     }
                 }
             }
-            ed::EndCreate(); // Wraps up object creation action handling.
         }
+        ed::EndCreate(); // Wraps up object creation action handling.
 
 
         // Handle deletion action
@@ -192,8 +195,8 @@ struct Example:
                 // You may reject link deletion by calling:
                 // ed::RejectDeletedItem();
             }
-            ed::EndDelete(); // Wrap up deletion action
         }
+        ed::EndDelete(); // Wrap up deletion action
 
 
         // End of interaction with editor.
@@ -209,6 +212,7 @@ struct Example:
         // ImGui::ShowMetricsWindow();
     }
 
+    std::string          m_SettingsFile;         // Config::SettingsFile, which has to outlive the editor.
     ed::EditorContext*   m_Context = nullptr;    // Editor context, required to trace a editor state.
     bool                 m_FirstFrame = true;    // Flag set for first frame only, some action need to be executed once.
     ImVector<LinkInfo>   m_Links;                // List of live links. It is dynamic unless you want to create read-only view over nodes.

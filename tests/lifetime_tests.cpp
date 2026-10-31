@@ -50,7 +50,10 @@ struct TwoNodes
     void AcceptDeletions()
     {
         if (!ed::BeginDelete())
+        {
+            ed::EndDelete();
             return;
+        }
         ed::LinkId linkId;
         while (ed::QueryDeletedLink(&linkId))
             if (ed::AcceptDeletedItem())
@@ -172,11 +175,14 @@ TEST_CASE(PendingNewLinkToDeletedPin, "lifetime.pending_new_link_to_deleted_pin"
     session.DefaultContent = [&](int frame)
     {
         scene.Submit(frame);
-        if (handleCreate && ed::BeginCreate())
+        if (handleCreate)
         {
-            ed::PinId startPinId, endPinId;
-            if (ed::QueryNewLink(&startPinId, &endPinId) && ed::AcceptNewItem())
-                ++created;
+            if (ed::BeginCreate())
+            {
+                ed::PinId startPinId, endPinId;
+                if (ed::QueryNewLink(&startPinId, &endPinId) && ed::AcceptNewItem())
+                    ++created;
+            }
             ed::EndCreate();
         }
         if (deleteNode)
@@ -238,8 +244,8 @@ TEST_CASE(ManualDeleteQueue, "lifetime.manual_delete_queue_outlives_objects", "A
             while (ed::QueryDeletedNode(&nodeId))
                 if (ed::AcceptDeletedItem())
                     nodeAlive = false;
-            ed::EndDelete();
         }
+        ed::EndDelete();
     };
 
     session.Run(3);
@@ -288,8 +294,8 @@ TEST_CASE(NavigateAfterDeletingRememberedObject, "lifetime.navigate_after_deleti
                     replaceNode  = true;
                 }
             }
-            ed::EndDelete();
         }
+        ed::EndDelete();
     };
 
     session.Run(3);
@@ -297,7 +303,7 @@ TEST_CASE(NavigateAfterDeletingRememberedObject, "lifetime.navigate_after_deleti
     session.Run(2);
     session.PressKey(ImGuiKey_F);
     session.Run(60);
-    const float zoom = session.Use([] { return ed::GetCurrentZoom(); });
+    const float zoom = session.Use([] { return test::CurrentZoom(); });
 
     deleteNode = true;
     session.Run(5);
@@ -306,14 +312,14 @@ TEST_CASE(NavigateAfterDeletingRememberedObject, "lifetime.navigate_after_deleti
     session.Run(2);
     session.PressKey(ImGuiKey_F);
     session.Run(60);
-    const float zoomAfter = session.Use([] { return ed::GetCurrentZoom(); });
+    const float zoomAfter = session.Use([] { return test::CurrentZoom(); });
     test::Check(zoomAfter == zoom, "F over the new node centers it without zooming: zoom %g -> %g", zoom, zoomAfter);
 }
 
 TEST_CASE(EditorDestroyedWhileAnimating, "lifetime.editor_destroyed_while_navigating_and_flowing", "INT-20", test::TestFlags_None)
 {
     // The editor ends while navigation and a flow are still playing.
-    ed::ViewState before, after;
+    ImVec2 before, after;
     {
         TwoNodes nodes;
         test::Storage storage;
@@ -328,9 +334,9 @@ TEST_CASE(EditorDestroyedWhileAnimating, "lifetime.editor_destroyed_while_naviga
             }
         };
         session.Run(5);
-        before = session.Use([] { return ed::GetViewState(); });
+        before = session.Use([] { return ed::ScreenToCanvas(ImVec2(0.0f, 0.0f)); });
         session.Run(1);
-        after = session.Use([] { return ed::GetViewState(); });
+        after = session.Use([] { return ed::ScreenToCanvas(ImVec2(0.0f, 0.0f)); });
     }
-    test::Check(before.VisibleMin.x != after.VisibleMin.x || before.VisibleMax.x != after.VisibleMax.x, "the view was still moving when the editor ended");
+    test::Check(before.x != after.x || before.y != after.y, "the view was still moving when the editor ended");
 }

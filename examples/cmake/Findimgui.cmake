@@ -3,8 +3,11 @@ include(FetchContent)
 if (NOT TARGET imgui)
     FetchContent_Declare(
         imgui
+        # Dear ImGui + stack layout + the two patches of misc/imgui_patches (see docs/fork_imgui_bundle.md),
+        # at a fixed tag: the branches "layouts" and "imgui_bundle" are rebased from time to time.
+        # Upstream fetches thedmd/imgui b085dd8feac1595915d85243b5515af34a10a394 (feature/layout-external).
         GIT_REPOSITORY      https://github.com/pthom/imgui.git
-        GIT_TAG             ce5a44c49a34ff677f8bab16e1d4e62ee1e31c04 # Dear ImGui 1.93.0 WIP with docking and Stack Layout; matches lumengine_imgui_bundle
+        GIT_TAG             bundle_20261019b
     )
 
     FetchContent_MakeAvailable(imgui)

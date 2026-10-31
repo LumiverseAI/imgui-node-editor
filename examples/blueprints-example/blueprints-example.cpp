@@ -117,6 +117,7 @@ struct Node
     NodeType Type;
     ImVec2 Size;
 
+    std::string State;
     std::string SavedState;
 
     Node(int id, const char* name, ImColor color = ImColor(255, 255, 255)):
@@ -496,9 +497,44 @@ struct Example:
 
     void OnStart() override
     {
-        ed::InstallSettingsHandler();
+        m_SettingsFile = ResolvePath("Blueprints.json");
 
         ed::Config config;
+
+        config.SettingsFile = m_SettingsFile.c_str();
+
+        config.UserPointer = this;
+
+        config.LoadNodeSettings = [](ed::NodeId nodeId, char* data, void* userPointer) -> size_t
+        {
+            auto self = static_cast<Example*>(userPointer);
+
+            auto node = self->FindNode(nodeId);
+            if (!node)
+                return 0;
+
+            if (data != nullptr)
+                memcpy(data, node->State.data(), node->State.size());
+            return node->State.size();
+        };
+
+        // Nodes whose state changed are marked in the node list for a while.
+        config.SaveNodeSettings = [](ed::NodeId nodeId, const char* data, size_t size, ed::SaveReasonFlags reason, void* userPointer) -> bool
+        {
+            IM_UNUSED(reason);
+
+            auto self = static_cast<Example*>(userPointer);
+
+            auto node = self->FindNode(nodeId);
+            if (!node)
+                return false;
+
+            node->State.assign(data, size);
+
+            self->TouchNode(nodeId);
+
+            return true;
+        };
 
         m_Editor = ed::CreateEditor(&config);
         ed::SetCurrentEditor(m_Editor);
@@ -761,9 +797,8 @@ struct Example:
 
                 ed::NavigateToSelection();
             }
-            ed::NodeState state;
-            if (ImGui::IsItemHovered() && ed::GetNodeState(node.ID, &state))
-                ImGui::SetTooltip("State: %s", ed::FormatNodeState(state));
+            if (ImGui::IsItemHovered() && !node.State.empty())
+                ImGui::SetTooltip("State: %s", node.State.c_str());
 
             auto id = std::string("(") + std::to_string(reinterpret_cast<uintptr_t>(node.ID.AsPointer())) + ")";
             auto textSize = ImGui::CalcTextSize(id.c_str(), nullptr);
@@ -783,8 +818,8 @@ struct Example:
 # endif
             if (node.SavedState.empty())
             {
-                if (ImGui::InvisibleButton("save", ImVec2((float)saveIconWidth, (float)saveIconHeight)) && ed::GetNodeState(node.ID, &state))
-                    node.SavedState = ed::FormatNodeState(state);
+                if (ImGui::InvisibleButton("save", ImVec2((float)saveIconWidth, (float)saveIconHeight)))
+                    node.SavedState = node.State;
 
                 if (ImGui::IsItemActive())
                     drawList->AddImage(m_SaveIcon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 96));
@@ -809,9 +844,8 @@ struct Example:
             {
                 if (ImGui::InvisibleButton("restore", ImVec2((float)restoreIconWidth, (float)restoreIconHeight)))
                 {
-                    state.Id = node.ID;
-                    if (ed::ParseNodeState(node.SavedState.c_str(), node.SavedState.size(), &state))
-                        ed::SetNodeState(state);
+                    node.State = node.SavedState;
+                    ed::RestoreNodeState(node.ID);
                     node.SavedState.clear();
                 }
 
@@ -1495,11 +1529,11 @@ struct Example:
                             ed::Resume();
                         }
                     }
-
-                    ed::EndCreate();
                 }
                 else
                     newLinkPin = nullptr;
+
+                ed::EndCreate();
 
                 if (ed::BeginDelete())
                 {
@@ -1529,9 +1563,8 @@ struct Example:
                                 m_Links.erase(id);
                         }
                     }
-
-                    ed::EndDelete();
                 }
+                ed::EndDelete();
             }
 
             ImGui::SetCursorScreenPos(cursorTopLeft);
@@ -1723,16 +1756,6 @@ struct Example:
         cubic_bezier_subdivide(acceptPoint, c);
     */
 
-        // Nodes the user moved or resized are marked in the node list for a while.
-        if (ed::BeginEdits())
-        {
-            ed::Edit edit;
-            while (ed::QueryEdit(&edit))
-                for (int i = 0; i < edit.NodeCount; ++i)
-                    TouchNode(edit.NodesAfter[i].Id);
-            ed::EndEdits();
-        }
-
         ed::End();
 
         auto editorMin = ImGui::GetItemRectMin();
@@ -1790,6 +1813,7 @@ struct Example:
     const float          m_TouchTime = 1.0f;
     std::map<ed::NodeId, float, NodeIdLess> m_NodeTouchTime;
     bool                 m_ShowOrdinals = false;
+    std::string          m_SettingsFile;
 };
 
 int Main(int argc, char** argv)

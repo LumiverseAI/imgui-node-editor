@@ -89,36 +89,6 @@ const ax::NodeEditor::Config& ax::NodeEditor::GetConfig(EditorContext* ctx)
     }
 }
 
-void ax::NodeEditor::InstallSettingsHandler(ImGuiContext* context)
-{
-    ax::NodeEditor::Detail::InstallSettingsHandler(context);
-}
-
-void ax::NodeEditor::LoadSettingsFromMemory(const char* data, size_t size)
-{
-    CurrentEditor()->LoadSettingsFromMemory(data, size);
-}
-
-const char* ax::NodeEditor::SaveSettingsToMemory(size_t* outSize)
-{
-    return CurrentEditor()->SaveSettingsToMemory(outSize);
-}
-
-bool ax::NodeEditor::WantSaveSettings()
-{
-    return CurrentEditor()->WantSaveSettings();
-}
-
-void ax::NodeEditor::ClearWantSaveSettings()
-{
-    CurrentEditor()->ClearWantSaveSettings();
-}
-
-ax::NodeEditor::SaveReasonFlags ax::NodeEditor::GetSettingsChangeReason()
-{
-    return CurrentEditor()->GetSettingsChangeReason();
-}
-
 void ax::NodeEditor::SetCurrentEditor(EditorContext* ctx)
 {
     s_Editor = reinterpret_cast<ax::NodeEditor::Detail::EditorContext*>(ctx);
@@ -169,8 +139,17 @@ void ax::NodeEditor::PopStyleVar(int count)
     CurrentEditor()->GetStyle().PopVar(count);
 }
 
+static ax::NodeEditor::BeginHook s_BeginHook = nullptr;
+
+void ax::NodeEditor::SetBeginHook(BeginHook hook)
+{
+    s_BeginHook = hook;
+}
+
 void ax::NodeEditor::Begin(const char* id, const ImVec2& size)
 {
+    if (s_BeginHook)
+        s_BeginHook();
     CurrentEditor()->Begin(id, size);
 }
 
@@ -267,9 +246,18 @@ ImDrawList* ax::NodeEditor::GetNodeBackgroundDrawList(NodeId nodeId)
         return nullptr;
 }
 
-bool ax::NodeEditor::Link(LinkId id, PinId startPinId, PinId endPinId, const ImVec4& color/* = ImVec4(1, 1, 1, 1)*/, float thickness/* = 1.0f*/)
+// Sentinel: alpha == 0 means "auto-pick a theme-friendly color"
+// (resolved to ImGuiCol_Text so links stay readable on light AND dark themes).
+static ImVec4 ResolveAutoLinkColor(const ImVec4& color)
 {
-    return CurrentEditor()->DoLink(id, startPinId, endPinId, ImColor(color), thickness);
+    if (color.w == 0.0f)
+        return ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    return color;
+}
+
+bool ax::NodeEditor::Link(LinkId id, PinId startPinId, PinId endPinId, const ImVec4& color/* = ImVec4(0, 0, 0, 0)*/, float thickness/* = 1.0f*/)
+{
+    return CurrentEditor()->DoLink(id, startPinId, endPinId, ImColor(ResolveAutoLinkColor(color)), thickness);
 }
 
 void ax::NodeEditor::Flow(LinkId linkId, FlowDirection direction)
@@ -284,7 +272,7 @@ bool ax::NodeEditor::BeginCreate(const ImVec4& color, float thickness)
 
     if (context.Begin())
     {
-        context.SetStyle(ImColor(color), thickness);
+        context.SetStyle(ImColor(ResolveAutoLinkColor(color)), thickness);
         return true;
     }
     else
@@ -459,6 +447,12 @@ float ax::NodeEditor::GetNodeZPosition(NodeId nodeId)
     return CurrentEditor()->GetNodeZPosition(nodeId);
 }
 
+void ax::NodeEditor::RestoreNodeState(NodeId nodeId)
+{
+    if (auto node = CurrentEditor()->FindNode(nodeId))
+        CurrentEditor()->MarkNodeToRestoreState(node);
+}
+
 void ax::NodeEditor::Suspend()
 {
     CurrentEditor()->Suspend();
@@ -474,9 +468,9 @@ bool ax::NodeEditor::IsSuspended()
     return CurrentEditor()->IsSuspended();
 }
 
-bool ax::NodeEditor::IsFocused()
+bool ax::NodeEditor::InputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size, ImGuiInputTextFlags flags, ImGuiInputTextCallback callback, void* user_data)
 {
-    return CurrentEditor()->IsFocused();
+    return ImGuiEx::CanvasInputTextMultiline(label, buf, buf_size, size, flags, callback, user_data);
 }
 
 bool ax::NodeEditor::IsActive()
@@ -579,84 +573,6 @@ bool ax::NodeEditor::DeleteLink(LinkId linkId)
         return CurrentEditor()->GetItemDeleter().Add(link);
     else
         return false;
-}
-
-bool ax::NodeEditor::ForgetNode(NodeId nodeId)
-{
-    return CurrentEditor()->ForgetNode(nodeId);
-}
-
-void ax::NodeEditor::ClearState()
-{
-    CurrentEditor()->ClearState();
-}
-
-bool ax::NodeEditor::GetNodeState(NodeId nodeId, NodeState* state)
-{
-    IM_ASSERT(state);
-    return CurrentEditor()->GetNodeState(nodeId, *state);
-}
-
-int ax::NodeEditor::GetNodeStates(NodeState* states, int capacity)
-{
-    return CurrentEditor()->GetNodeStates(states, capacity);
-}
-
-bool ax::NodeEditor::SetNodeState(const NodeState& state)
-{
-    return CurrentEditor()->SetNodeState(state);
-}
-
-bool ax::NodeEditor::SetNodeStates(const NodeState* states, int count)
-{
-    bool changed = false;
-    for (int i = 0; i < count; ++i)
-        changed |= CurrentEditor()->SetNodeState(states[i]);
-    return changed;
-}
-
-ax::NodeEditor::ViewState ax::NodeEditor::GetViewState()
-{
-    return CurrentEditor()->GetViewState();
-}
-
-bool ax::NodeEditor::SetViewState(const ViewState& state, float duration)
-{
-    return CurrentEditor()->SetViewState(state, duration);
-}
-
-bool ax::NodeEditor::SetSelection(const NodeId* nodes, int nodeCount, const LinkId* links, int linkCount)
-{
-    return CurrentEditor()->SetSelection(nodes, nodeCount, links, linkCount);
-}
-
-const char* ax::NodeEditor::FormatNodeState(const NodeState& state, size_t* outSize)
-{
-    return CurrentEditor()->FormatNodeState(state, outSize);
-}
-
-bool ax::NodeEditor::ParseNodeState(const char* data, size_t size, NodeState* state)
-{
-    IM_ASSERT(data && state);
-    if (!data || !state)
-        return false;
-    return ax::NodeEditor::Detail::EditorContext::ParseNodeState(data, size, *state);
-}
-
-bool ax::NodeEditor::BeginEdits()
-{
-    return CurrentEditor()->BeginEdits();
-}
-
-bool ax::NodeEditor::QueryEdit(Edit* edit)
-{
-    IM_ASSERT(edit);
-    return CurrentEditor()->QueryEdit(*edit);
-}
-
-void ax::NodeEditor::EndEdits()
-{
-    CurrentEditor()->EndEdits();
 }
 
 bool ax::NodeEditor::HasAnyLinks(NodeId nodeId)
@@ -777,7 +693,7 @@ void ax::NodeEditor::EndShortcut()
 
 float ax::NodeEditor::GetCurrentZoom()
 {
-    return CurrentEditor()->GetView().Scale();
+    return CurrentEditor()->GetView().InvScale();
 }
 
 ax::NodeEditor::NodeId ax::NodeEditor::GetHoveredNode()
@@ -862,6 +778,13 @@ ImVec2 ax::NodeEditor::ScreenToCanvas(const ImVec2& pos)
 ImVec2 ax::NodeEditor::CanvasToScreen(const ImVec2& pos)
 {
     return CurrentEditor()->ToScreen(pos);
+}
+
+ImVec2 ax::NodeEditor::GetMousePosOnCanvas()
+{
+    // In local space, the canvas has already moved Dear ImGui's mouse position into canvas coordinates
+    const ImVec2 mousePos = ImGui::GetMousePos();
+    return ImGuiEx::IsInsideCanvas() ? mousePos : s_Editor->ToCanvas(mousePos);
 }
 
 int ax::NodeEditor::GetNodeCount()

@@ -72,15 +72,16 @@ jobs:
     - name: Test
       run: ctest --test-dir build -C Debug --output-on-failure
 
-  # Releases on both sides of every IMGUI_VERSION_NUM guard, from the 1.89 floor
-  # to the latest release. tests/imgui_walk.py checks every release locally.
+  # Releases on both sides of every IMGUI_VERSION_NUM guard, from the 1.80 floor
+  # to the latest release; before 1.89 only the compatibility test builds.
+  # tests/imgui_walk.py checks every release locally.
   imgui-versions:
     name: Dear ImGui ${{ matrix.imgui }}${{ matrix.strict && ', strict' || '' }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        imgui: [v1.89, v1.89.5, v1.89.6, v1.89.7, v1.89.8, v1.90, v1.90.1, v1.91.0, v1.91.1, v1.92.6, v1.92.7, v1.92.8, v1.92.9b, v1.92.9b-docking]
+        imgui: [v1.80, v1.81, v1.82, v1.84, v1.85, v1.86, v1.87, v1.88, v1.89, v1.89.5, v1.89.6, v1.89.7, v1.89.8, v1.90, v1.90.1, v1.91.0, v1.91.1, v1.91.4, v1.91.5, v1.92.6, v1.92.7, v1.92.8, v1.92.9b, v1.92.9b-docking]
         strict: [false]
         include:
           - { imgui: v1.89,    strict: true }

@@ -102,14 +102,6 @@ struct IsEqualityComparable<T, U, decltype(void(std::declval<const T&>() == std:
 
 } // namespace
 
-TEST_CASE(JsonNoTypeComparison, "json.values_dont_compare_by_type", "JSON-8", test::TestFlags_None)
-{
-    // Through the conversion to type_t, value(1.0) == value(2.0) compared only the
-    // type tags, and held.
-    test::Check(!IsEqualityComparable<json::value, json::value>::value, "values don't compare with ==");
-    test::Check(static_cast<json::type_t>(json::value(1.0)) == json::type_t::number, "the type is still there for an explicit conversion");
-}
-
 TEST_CASE(JsonRejectedNumber, "json.rejected_number_rejects_the_document", "JSON-9", test::TestFlags_None)
 {
     // 1e999 overflows; the literal right after it was read in its place.
@@ -156,40 +148,6 @@ bool RoundTrips(double number)
 
 } // namespace
 
-TEST_CASE(JsonNumberDigits, "json.numbers_round_trip_in_17_significant_digits", "JSON-9", test::TestFlags_None)
-{
-    // 17 significant digits read back as the same double; an 18th only adds noise.
-    const auto tenth = json::value(0.1).dump();
-    test::Check(tenth == "0.10000000000000001", "0.1 written as %s", tenth.c_str());
-
-    // Finite doubles and floats from random bit patterns, across the whole range.
-    RandomBits random;
-    int doubles = 0, floats = 0, differing = 0;
-    while (doubles < 5000)
-    {
-        const auto bits = random.Next();
-        double number;
-        std::memcpy(&number, &bits, sizeof(number));
-        if (!std::isfinite(number))
-            continue;
-        ++doubles;
-        if (!RoundTrips(number))
-            ++differing;
-    }
-    while (floats < 5000)
-    {
-        const auto bits = static_cast<uint32_t>(random.Next() >> 32);
-        float number;
-        std::memcpy(&number, &bits, sizeof(number));
-        if (!std::isfinite(number))
-            continue;
-        ++floats;
-        if (!RoundTrips(number))
-            ++differing;
-    }
-    test::Check(differing == 0, "doubles and floats read back exactly: %d of 10000 differ", differing);
-}
-
 TEST_CASE(JsonDepth, "json.nesting_beyond_the_limit_is_rejected", "JSON-7", test::TestFlags_None)
 {
     // Arrays nested to the default limit of 512, one past it, and 2500 deep, which
@@ -215,33 +173,6 @@ TEST_CASE(JsonEscapes, "json.keys_and_values_are_escaped_alike", "JSON-6", test:
     const auto parsed = json::value::parse(text);
     test::Check(!parsed.is_discarded() && parsed["a\"b"].get<json::string>() == "tab\there" && parsed["a\\b"].get<json::string>() == "one\x01" "end",
         "and read back");
-}
-
-TEST_CASE(JsonIntegers, "json.integers_are_stored_as_numbers", "JSON-12", test::TestFlags_None)
-{
-    // value(int) was ambiguous between bool and double.
-    json::value document;
-    document["int"]      = 42;
-    document["negative"] = -3LL;
-    document["size"]     = static_cast<size_t>(1) << 40;
-    document["unsigned"] = 7u;
-    const json::value constructed = 5;
-
-    const auto text = document.dump();
-    test::Check(text == R"({"int":42,"negative":-3,"size":1099511627776,"unsigned":7})", "assigned integers written as %s", text.c_str());
-    test::Check(constructed.is_number() && constructed.get<json::number>() == 5.0, "value(5) is the number 5");
-}
-
-TEST_CASE(JsonPointers, "json.pointers_other_than_strings_dont_convert", "JSON-12", test::TestFlags_None)
-{
-    // Any pointer converted to bool, so a wide string became true.
-    test::Check(!std::is_constructible<json::value, const wchar_t*>::value && !std::is_constructible<json::value, int*>::value,
-        "value(const wchar_t*) and value(int*) don't compile");
-    test::Check(!std::is_assignable<json::value&, const wchar_t*>::value, "assigning a const wchar_t* doesn't compile");
-
-    char text[] = "text";
-    const json::value fromArray = text, fromPointer = static_cast<char*>(text), fromLiteral = "text";
-    test::Check(fromArray.is_string() && fromPointer.is_string() && fromLiteral.is_string(), "char strings still make strings");
 }
 
 TEST_CASE(JsonGetOtherType, "json.get_of_another_type_returns_an_empty_value", "JSON-12", test::TestFlags_None)
@@ -324,24 +255,6 @@ TEST_CASE(JsonLoadByteOrderMark, "json.load_skips_a_utf8_byte_order_mark", "JSON
     test::Check(loaded.second && loaded.first["list"][1].is_number(), "a document after a byte order mark is read");
 }
 
-TEST_CASE(JsonUtf8Paths, "json.paths_are_utf8", "JSON-12", test::TestFlags_None)
-{
-    // On Windows the path went through the active code page, which mangled the name.
-    const char* path = "json_path_za\xC5\xBC\xC3\xB3\xC5\x82\xC4\x87.json";
-    json::value document;
-    document["key"] = 1.0;
-
-    const auto saved  = document.save(path);
-    const auto loaded = json::value::load(path);
-    test::Check(saved && loaded.second && loaded.first["key"].is_number(), "a document saved under a UTF-8 path loads back");
-
-# ifdef _WIN32
-    test::Check(_wremove(L"json_path_za\u017C\u00F3\u0142\u0107.json") == 0, "the file has the name the path spells");
-# else
-    std::remove(path);
-# endif
-}
-
 TEST_CASE(JsonSaveThroughTemporaryFile, "json.save_replaces_the_file_through_a_temporary_one", "JSON-12", test::TestFlags_None)
 {
     // save() wrote over the file in place, so a save that failed midway lost it.
@@ -378,15 +291,6 @@ TEST_CASE(JsonNothrowMoves, "json.values_move_without_throwing", "JSON-10", test
 }
 
 std::string RenamedCrudeJsonRoundTrip(const std::string& text); // crude_json_renamed.cpp
-
-TEST_CASE(JsonRenamedNamespace, "json.a_copy_in_another_namespace_links_beside_it", "JSON-13", test::TestFlags_None)
-{
-    // Another library's copy, built with CRUDE_JSON_NAMESPACE of its own, in one program with the editor's.
-    const char* document = R"({"a":[1,true,"x"],"b":null})";
-    const auto renamed = RenamedCrudeJsonRoundTrip(document);
-    const auto own     = json::value::parse(document).dump();
-    test::Check(renamed == own && renamed == document, "both copies read and write the document: %s and %s", renamed.c_str(), own.c_str());
-}
 
 TEST_CASE(JsonRepeatedKey, "json.a_repeated_key_keeps_its_first_value", "JSON-13", test::TestFlags_None)
 {

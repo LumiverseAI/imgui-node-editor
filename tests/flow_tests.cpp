@@ -57,7 +57,10 @@ struct FlowScene
     void AcceptDeletions(int frame)
     {
         if (!ed::BeginDelete())
+        {
+            ed::EndDelete();
             return;
+        }
         ed::NodeId nodeId;
         while (ed::QueryDeletedNode(&nodeId))
             if (ed::AcceptDeletedItem())

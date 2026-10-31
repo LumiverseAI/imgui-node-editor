@@ -1,24 +1,33 @@
-v0.10.0 (WIP):
-
-    BREAKING: Editor: Ensure CreateItemAction is not activated from invalid state, thanks @pthom
-        From this point ed::EndCreate() can only be called when ed::BeginCreate() was successful.
-
-    BREAKING: Editor: Minimum supported version is now Dear ImGui 1.89 (November 2022)
-
-    BREAKING: Canvas: Minimum supported version is now Dear ImGui 1.89 (November 2022)
-
-    BREAKING: Examples: Build only against the Dear ImGui revision they pin
-        thedmd/imgui feature/layout-external: Dear ImGui 1.93.0 WIP with Stack Layout.
-
-    RESTRUCTURE:
-        Removed local copy of all dependencies in favor of auto checkout. This should also reduce
-        user confusion and attempt to use ancient version of ImGui embedded in the repository.
-
-    NEW: Canvas: Add example of zooming at fixed point (#270)
+v0.9.4 (WIP):
 
     NEW: Editor: Add smooth zoom (#266)
 
-    BUGFIX: Examples: Call ed::EndCreate() and ed::EndDelete() only when ed::BeginCreate() and ed::BeginDelete() returned true
+    NEW: Canvas: Add IsVisible(); Begin() returns true also for a canvas out of view
+
+    NEW: Canvas: Add example of zooming at fixed point (#270)
+
+    NEW: Examples: Choose GLFW and OpenGL on Windows
+        IMGUI_NODE_EDITOR_EXAMPLES_BACKEND takes win32 or glfw, IMGUI_NODE_EDITOR_EXAMPLES_RENDERER dx11 or opengl3.
+
+    NEW: Examples: Pass definitions to Dear ImGui and the examples with IMGUI_NODE_EDITOR_EXAMPLES_DEFINITIONS
+        For example IMGUI_DISABLE_OBSOLETE_FUNCTIONS, for a strict build.
+
+    CHANGE: Canvas: CanvasView keeps its scale and inverse scale private and in sync
+        Read them with Origin(), Scale() and InvScale(), set them with Set(), SetOrigin() and SetScale(), which refuses a scale that isn't positive and finite.
+
+    CHANGE: Examples: Fetch Dear ImGui, stb and GLFW at pinned revisions
+        Examples build only against thedmd/imgui feature/layout-external (Dear ImGui 1.93.0 WIP
+        with Stack Layout v2.1), no longer against the copy in external/, and need CMake 3.24.
+
+    CHANGE: Examples: Drop the shortcut toggling from the widgets example
+        The editor ignores its shortcuts while a widget inside it is active.
+
+    CHANGE: Examples: Build as standard C++, without compiler extensions
+
+    CHANGE: Examples: Build with -Wall -Wextra on GCC and Clang
+
+    CHANGE: Examples: Remove the copies of their dependencies in external/
+        Dear ImGui 1.84 WIP, stb_image, ScopeGuard and D3DX11 from the DirectX SDK, with their CMake modules in misc/cmake-modules.
 
     BUGFIX: Canvas: Remember index of first command buffer to not miss updating any used (#260)
 
@@ -32,14 +41,15 @@ v0.10.0 (WIP):
 
     BUGFIX: Editor: Make Suspend/Resume work inside BeginNode/EndNode (#282)
 
-    BUGFIX: Editor: Don't use ImRect::Floor() removed in ImGui 1.92.6
+    BUGFIX: Editor: Pass AddRect() and PathStroke() arguments in order used since ImGui r19276 (#339), thanks @pthom
 
-    BUGFIX: Editor: Don't duplicate float * ImVec2 operator defined since ImGui r19268
+    BUGFIX: Editor: Don't duplicate float * ImVec2 operator defined since ImGui r19268 (#335), thanks @sonoro1234
 
-    BUGFIX: Editor: Pass AddRect() and PathStroke() arguments in order used since ImGui r19276
+    BUGFIX: Editor: Build with Dear ImGui before 1.91.5 again (#330), thanks @LAK132
+        ImGui::GetKeyIndex() was defined in ImGui's namespace, as ImGui itself does up to 1.91.4,
+        and IM_TRUNC was used, which ImGui defines since 1.90.
 
     BUGFIX: Editor: Don't use ImDrawFlags_RoundCornersAll renamed in ImGui 1.93
-        Style::PinCorners now defaults to 0, which ImGui draws with all corners rounded.
 
     BUGFIX: Canvas: Set draw list pixel density with _SetPixelDensity() since ImGui r19292
         Zoomed canvas lost anti-aliasing with ImGui 1.93.
@@ -49,55 +59,17 @@ v0.10.0 (WIP):
     BUGFIX: Editor: Keep stroke placement of borders and grid since ImGui r19298
         With ImGui 1.93 the selection border was hidden and grid lines were blurred.
 
-    CHANGE: Examples: Pin ImGui, stb and GLFW revisions
-        Examples build against thedmd/imgui feature/layout-external (Dear ImGui 1.93.0 WIP
-        with Stack Layout v2.1) and need CMake 3.24.
-
-    BUGFIX: Examples: Treat ImTextureID as an opaque value
-
-    BUGFIX: Examples: Let ImGui rasterize fonts at framebuffer density
-
-    BUGFIX: Examples: Let renderer backends apply framebuffer scale
-
-    BUGFIX: Examples: Pass AddRect() and PathStroke() arguments in order used since ImGui r19276
-        Corner flags given as fifth AddRect() argument drew outlines as thick as the flag value.
-
-    BUGFIX: Examples: Don't use API obsoleted in ImGui 1.93
-
-    BUGFIX: Examples: Copy data files without racing in parallel builds
-
-    BUGFIX: Editor: Check minimum ImGui version in every translation unit
-
-    BUGFIX: Canvas: Check minimum ImGui version
-
     BUGFIX: Editor: Write IMGUI_NODE_EDITOR_VERSION_NUM in decimal
-        001000 was octal 512, so version checks against 1000 failed.
-
-    NEW: Tests: Add headless test suite, run with CTest from tests/
+        000904 was an octal literal with the digit 9, so any version check failed to compile.
 
     BUGFIX: Editor: Offer created item to application only once
         Rejected items were offered again on every frame, and a drag cancelled after
         the item was accepted left BeginCreate() returning true until the next drag.
 
-    BREAKING: Editor: Call EndDelete() and EndShortcut() only when BeginDelete() and BeginShortcut() returned true
-        Calls after a failed Begin assert, as EndCreate() did. Code written for 0.9.x calls
-        them unconditionally: move the calls inside 'if (ed::BeginDelete())' and
-        'if (ed::BeginShortcut())'. IMGUI_NODE_EDITOR_VERSION_NUM >= 1000 detects this version.
-
     BUGFIX: Editor: Drop references to deleted objects before freeing them
         Freed nodes, pins and links were still read through the selection, the link under the mouse,
         flow animations, the DeleteNode()/DeleteLink() queue and pending new links.
         GetLinkPins() returns false for a link whose pins were deleted.
-
-    CHANGE: Editor: Report links deleted together with their node, whatever the order of queries
-        Such links are deselected at once and reported by QueryDeletedLink() with the pins they connected:
-        in the same interaction when queried after the node, otherwise in one more interaction in the
-        next frame. They are already deleted: AcceptDeletedItem() returns true and does nothing,
-        RejectDeletedItem() asserts. Links not submitted yet in that frame are deleted too.
-
-    CHANGE: Editor: Accept DeleteNode(), DeleteLink() and BreakLinks() while another action is in progress
-        They returned false until the editor was idle. Queued items now join the next delete interaction,
-        also one the Delete key or Alt+click starts, and each is offered once.
 
     BUGFIX: Editor: Stop flow animations when their link is deleted
         Finished animations are reused. Style::FlowMarkerDistance is at least one canvas pixel; a negative
@@ -117,8 +89,6 @@ v0.10.0 (WIP):
 
     BUGFIX: Canvas: Enter local space and reserve layout space also when the canvas is clipped
         Content of a canvas out of view was drawn untransformed, and content below it moved up.
-
-    NEW: Canvas: Add IsVisible(); Begin() returns true also for a canvas out of view
 
     BUGFIX: Editor: Don't draw or hit-test the graph over the host window while the canvas is out of view
         Interactions and saving wait until the canvas is visible again.
@@ -165,34 +135,11 @@ v0.10.0 (WIP):
         A view wider than 2^29 canvas units, such as navigating to content 10^9 units across, hung the frame.
         Grid lines less than 2 pixels apart, or fully transparent, are not drawn.
 
-    BREAKING: Editor: Keep settings in imgui.ini or application storage instead of a file
-        Config::SettingsFile with its NodeEditor.json default, Config::SaveSettings, LoadSettings,
-        BeginSaveSession and EndSaveSession are removed, and the editor writes no files.
-        ed::InstallSettingsHandler(), called once per ImGui context before ImGui reads .ini data, keeps
-        the state of each editor in a [NodeEditor][Config::SettingsName] section of imgui.ini.
-        Applications that store it themselves set Config::SettingsName to nullptr, call
-        ed::LoadSettingsFromMemory() before the first ed::Begin(), and store ed::SaveSettingsToMemory()
-        once ed::WantSaveSettings() is true. Files written through SettingsFile load this way.
-
-    NEW: Editor: Add InstallSettingsHandler(), LoadSettingsFromMemory(), SaveSettingsToMemory(), WantSaveSettings(), ClearWantSaveSettings() and GetSettingsChangeReason()
-
-    CHANGE: Examples: Keep editor state in the example's .ini file through InstallSettingsHandler()
-
-    NEW: Editor: Add Config::SettingsContent to choose what the settings hold
-        Applications that keep node layout in their own documents leave SettingsContentFlags::Nodes out.
-
     BUGFIX: Editor: Change settings once a navigation settles, not on each of its frames
         One wheel notch changed them 10 times, and NavigateToContent() 21 times.
 
     BUGFIX: Editor: Don't change settings when a fractional position is set again
         SetNodePosition() and SetGroupSize() called with the same fractional value changed them on every call.
-
-    BUGFIX: Editor: Keep settings of nodes not submitted in a session
-        The first save dropped the layout of every node the application didn't show.
-
-    BUGFIX: Editor: Route keyboard shortcuts through ImGui's Shortcut API
-        Ctrl+X/C/V/D and Space typed into a text field in a node also reached the editor, held keys repeated
-        shortcuts, F navigated with any modifier, and with ImGui 1.89.2 to 1.90.6 macOS needed Ctrl, not Cmd.
 
     BUGFIX: Editor: Pick the group edge to resize where the drag started
         A fast first move did nothing or moved the group, and a resize with DragButtonIndex other than 0
@@ -207,16 +154,6 @@ v0.10.0 (WIP):
     BUGFIX: Editor: Zoom around the point under the mouse while a zoom animation plays
         Quick wheel notches zoomed around a point away from the mouse.
 
-    BUGFIX: Editor: Step wheel zoom through the zoom levels in the wheel's direction
-        Trackpads didn't zoom in stepped mode, a step skipped the nearest level or stuck on duplicate levels,
-        and from a zoom outside the levels the wheel zoomed the wrong way.
-
-    CHANGE: Editor: Sort Config::CustomZoomLevels and drop duplicate and non-positive levels
-        Config::SmoothZoomPower must be greater than 1.
-
-    CHANGE: Editor: Smooth zoom is on by default
-        0.9.x stepped through zoom levels; Config::EnableSmoothZoom = false keeps doing so.
-
     BUGFIX: Editor: Give nodes and pins separate hit-test IDs
         Dragging node 1 above pin 1 of another node started a link from the pin.
 
@@ -226,9 +163,6 @@ v0.10.0 (WIP):
 
     BUGFIX: Editor: Report background double-clicks with mouse button indices
         GetBackgroundDoubleClickButtonIndex() returned 1, 2 and 4, and a right double-click went unnoticed.
-
-    CHANGE: Editor: Select nodes and links only with Config::SelectButtonIndex
-        A right or middle click on an object selected it. The context menu functions still report the object.
 
     BUGFIX: Editor: List the shortcut context in GetActionContextNodes() and GetActionContextLinks()
         They listed the selection, without a hovered node, the contents of selected groups or the links
@@ -241,16 +175,10 @@ v0.10.0 (WIP):
     BUGFIX: Editor: Flow links that are submitted after ed::Flow() in the frame
         ed::Flow() called before ed::Link() in a frame did nothing.
 
-    CHANGE: Editor: Make F over nested groups center the innermost one
-        It centered the outermost group under the mouse.
-
-    BUGFIX: Editor: Toggle selection with Cmd+click on macOS before ImGui 1.90.7
-        Ctrl+click selection needed the physical Ctrl key on those versions.
-
     BUGFIX: Editor: Give clicks on overlapping nodes to the widgets of the top one (#337), thanks @pthom
         Widgets of the node drawn below took hover and clicks.
 
-    BUGFIX: Editor: Don't pan when a drag enters the editor from another window (#238)
+    BUGFIX: Editor: Don't pan when a drag enters the editor from another window (#238), thanks @JulesFouchy
         A right-drag started in another window panned the editor once the mouse entered it.
 
     BUGFIX: Editor: Measure nodes and pins without items correctly on ImGui 1.91
@@ -264,22 +192,6 @@ v0.10.0 (WIP):
 
     BUGFIX: Editor: Draw the new link preview with the requested thickness
         It was 1 pixel thicker, with arrows enlarged by the requested thickness.
-
-    BUGFIX: Examples: Exit when closed while minimized on Win32
-        The process kept running without a window, and never saved its state.
-
-    BUGFIX: Examples: Don't quit on Escape on Win32
-        Escape skipped CanClose() and hung the shutdown, also when it was meant to close a popup.
-
-    CHANGE: Editor: Round node bounds the same way at any position
-        A node with content of fractional size changed size when dragged across 0. Nodes below 0 are now 1 px
-        smaller, as above 0, and positions there round down: -300.5 becomes -301.
-
-    BUGFIX: Editor: Snap to the grid the same way on both sides of zero
-        Below 0, nodes snapped toward 0, so -8 and 8 landed in the same cell.
-
-    BUGFIX: Editor: Snap a dragged node by the pin pivot closest to the grid
-        Dragging right or down held the node back by up to a grid cell.
 
     BUGFIX: Editor: Ignore non-finite positions in SetNodePosition() and sizes in SetGroupSize()
 
@@ -328,9 +240,6 @@ v0.10.0 (WIP):
     BUGFIX: Editor: Hover horizontal and vertical links as far from them as other links
         Their hover band was cut to 5.5 by a box around the curve, for any thickness.
 
-    CHANGE: Editor: Hover links up to 5 screen pixels past their stroke at any zoom
-        The slack was 5 canvas pixels: about 1 screen pixel at zoom 0.25, and 20 at zoom 4.
-
     BUGFIX: Canvas: Tessellate curves for the zoom with ImGui before 1.93
         Links looked faceted when zoomed in, tessellated as at zoom 1.
 
@@ -343,32 +252,11 @@ v0.10.0 (WIP):
     BUGFIX: Editor: Keep the clip rectangles of content drawn after a context menu shows
         Drawn in canvas space without Suspend(), it was clipped as if drawn in screen space, and hidden at zoom other than 1.
 
-    CHANGE: Editor: SetNodePosition() keeps nodes within 250000 of the origin
-        Beyond -256000 ImGui takes mouse positions for invalid, so such nodes could be hovered but not dragged; FLT_MAX lost the node's size, and -FLT_MAX left it at infinity.
-
-    CHANGE: Editor: Move nodes that grow past the canvas border back inside
-        A node keeps its size and moves inward instead, as one placed before it was ever measured does.
-
-    CHANGE: Editor: Keep nodes restored from saved state within the canvas border
-        State saved before the border existed places such nodes at it.
-
-    CHANGE: Editor: Stop dragged nodes at the canvas border together
-        Each node stopped on its own, so a selection dragged into the border lost its arrangement.
-
-    CHANGE: Editor: Stop group edges at the canvas border while resizing
-        The group moved back inside instead, so its opposite edge moved.
-
     BUGFIX: Canvas: Keep a suspended canvas in screen space when its view changes
         SetView() and CenterView() re-entered local space, transforming earlier geometry twice and remapping the mouse.
 
     BUGFIX: Canvas: Set clip rectangles pushed inside a canvas aside while it is suspended
         Suspend() popped whichever was on top, so drawing while suspended in a table cell or under a user's clip rectangle was clipped in canvas space. Leaving a clip rectangle pushed, or the canvas suspended in another window, now asserts.
-
-    BUGFIX: Canvas: Ignore Suspend() and Resume() outside Begin() and End(), with an assert
-        They left local space with stale state, restoring the mouse from an earlier frame.
-
-    BREAKING: Canvas: CanvasView keeps its scale and inverse scale private and in sync
-        Read them with Origin(), Scale() and InvScale(), set them with Set(), SetOrigin() and SetScale(), which refuses a scale that isn't positive and finite.
 
     BUGFIX: Canvas: Move the viewport's work area to local space with docking builds
         It was scaled but not translated, so with a main menu bar it lay outside the viewport.
@@ -385,7 +273,7 @@ v0.10.0 (WIP):
     BUGFIX: Editor: Lay the editor out in its place on the first frame
         It sat one canvas lower and pushed the content after it down for that frame.
 
-    BUGFIX: Canvas: Recognize its own sentinel draw command, and assert when it is out of reach
+    BUGFIX: Canvas: Recognize its own sentinel draw command, and assert when it is out of reach (#285), thanks @pthom
         Suspending with another splitter's channel current went unnoticed, as only channel numbers were compared.
 
     BUGFIX: Canvas: Strip sentinels left behind by misuse in End()
@@ -394,20 +282,8 @@ v0.10.0 (WIP):
     BUGFIX: Canvas: Lay content out from the local origin on every ImGui branch
         New lines, SameLine() offsets and the content region were relative to the window's screen position on master builds, and to its padding on docking ones.
 
-    CHANGE: Editor: BeginNode() pushes an ImGui ID scope for the node
-        Widgets with the same label in different nodes no longer share an ID. Their IDs change, so ImGui state kept by ID inside nodes, such as open tree nodes, resets once.
-
-    BREAKING: Editor: GetCurrentZoom() returns the zoom factor, 2 at 200%
-        It returned the inverse, 0.5 at 200%, unlike Config::CustomZoomLevels. Code that inverted it reads it directly now.
-
-    NEW: Editor: Add IsFocused(), a clearer name for IsActive()
-        Both tell whether the window the editor is in had focus in Begin().
-
     BUGFIX: Editor: Count nodes with GetOrderedNodeIds(nullptr, size)
         It wrote through the null pointer; it returns the number of nodes now, as GetSelectedNodes() does.
-
-    CHANGE: Editor: Refuse 0 as a node, pin or link ID, with an assert
-        0 is the invalid ID and the background's; a node, pin or link given it isn't created, and the matching End call is ignored.
 
     BUGFIX: Editor: Ignore misnested node and pin building, after asserting
         BeginPin() outside a node or a pin, a nested BeginNode(), and unmatched EndNode() or EndPin() crashed release builds or corrupted the draw list.
@@ -433,29 +309,14 @@ v0.10.0 (WIP):
     BUGFIX: crude_json: Reject documents nested deeper than CRUDE_JSON_MAX_DEPTH, 512 by default
         The recursive parser followed any nesting, and 2500 nested arrays overflowed a 1 MB stack.
 
-    BREAKING: crude_json: Convert a value to type_t only explicitly
-        Through the implicit conversion, values compared equal whenever their types did; == between values no longer compiles. Use type() or static_cast<type_t>().
-
     BUGFIX: crude_json: Reject a document when a number in it is rejected
         A number out of range followed by a literal was read as the literal: [1e999null] as [null].
 
     BUGFIX: crude_json: Read subnormal numbers
         dump() writes them, but they were rejected, which discarded the whole document.
 
-    CHANGE: crude_json: Write numbers with 17 significant digits
-        That is enough to read back the same double; the 18th digit was noise, as in 0.100000000000000006.
-
     BUGFIX: crude_json: Make moves and swap() noexcept
         Growing arrays copied their elements, and an allocation failing in swap() between values of different types left a destroyed value behind.
-
-    CHANGE: crude_json: Don't build an object for every array while parsing
-        MSVC allocates even for an empty std::map.
-
-    NEW: crude_json: Store integers as numbers
-        value(int) and assigning an int were ambiguous between bool and double. Integers are exact up to 2^53.
-
-    BREAKING: crude_json: Don't convert pointers other than char strings
-        They converted to bool, so value(L"text") was true. Such code no longer compiles.
 
     BUGFIX: crude_json: Return an empty value from get() of another type
         Past CRUDE_ASSERT, which release builds compile out, it read the storage as the type asked for.
@@ -466,44 +327,32 @@ v0.10.0 (WIP):
     BUGFIX: crude_json: Skip a UTF-8 byte order mark in load()
         A file that starts with one loaded as a discarded value.
 
-    BREAKING: crude_json: Take UTF-8 paths on Windows in load() and save()
-        They went through the active code page, which mangled UTF-8 names; paths in that code page now fail unless they are ASCII.
-
     BUGFIX: crude_json: Save through a temporary file
         save() truncated the file before writing it and ignored fclose() errors, so a save that failed midway lost the file.
 
-    BUGFIX: Editor: Drop the settings entry of a deleted node
-        Deleting a node only emptied its entry, so the entries piled up with every node ID ever deleted.
+    BUGFIX: Canvas: Keep tables and tab bars in the canvas out of the window's auto-fit size
+        They extend the window's ideal size in canvas space, so an auto-resizing window around the canvas
+        grew to fit a table placed far away in it.
 
-    NEW: Editor: Add ForgetNode() for nodes the application drops on its own
-        The node, its pins, the links to them, its saved state and its selection go, so a reused ID starts fresh.
+    BUGFIX: Canvas: Bring the canvas' clip rectangle back to the screen exactly
+        At some positions and zoom levels it came back a fraction of a pixel inside the canvas, and renderers
+        that truncate scissor rectangles cut a row or column of pixels off its edge.
 
-    NEW: Editor: Add ClearState() for a new document
-        It forgets all nodes, pins and links with their saved state, the selection and the view.
+    BUGFIX: Editor: Keep flow markers on very long links
+        Flow paths were sampled to a fixed fraction of the curve, so on links tens of thousands of units long
+        samples collapsed onto each other and some markers were drawn at non-finite positions.
 
-    NEW: Editor: Save the z position of nodes with their settings
-        As an optional z key, written only when not 0. SetNodeZPosition() ignores a value that isn't finite.
+    BUGFIX: Examples: Let ImGui rasterize fonts at framebuffer density
 
-    CHANGE: Editor: Find nodes through an index sorted by ID
-        Every lookup scanned all nodes, so submitting N nodes took O(N^2) per frame.
+    BUGFIX: Examples: Let renderer backends apply framebuffer scale
 
-    CHANGE: Editor: Keep node settings sorted by ID
-        Every lookup scanned all entries, on load and on every frame.
+    BUGFIX: Examples: Copy data files without racing in parallel builds
 
-    CHANGE: Editor: Insert new pins and links in order
-        Each new one sorted the whole vector, so the first frame of a large graph took O(N^2 log N).
+    BUGFIX: Examples: Exit when closed while minimized on Win32
+        The process kept running without a window, and never saved its state.
 
-    CHANGE: Editor: Grow the draw channels geometrically
-        Every node reallocated the channel array on a frame that needed more channels than before.
-
-    CHANGE: Editor: Collect the links of a copy or duplicate in one pass
-        Each node in the context scanned all links, so Ctrl+C with 6,000 nodes selected took 113 ms.
-
-    BREAKING: Editor: Don't define operator*(float, ImVec2) for Dear ImGui before 1.92.7
-        An application defining it as well failed to compile with the editor's headers; write v * s instead of s * v there.
-
-    CHANGE: Examples: Don't force IMGUI_DISABLE_OBSOLETE_* on the ImGui they fetch
-        IMGUI_NODE_EDITOR_EXAMPLES_DEFINITIONS sets definitions for a strict build instead.
+    BUGFIX: Examples: Don't quit on Escape on Win32
+        Escape skipped CanClose() and hung the shutdown, also when it was meant to close a popup.
 
     BUGFIX: Examples: Keep pins pointing at their nodes after a deletion in the blueprints example
         Erasing a node moved the nodes after it, and their pins kept pointing at the old places.
@@ -529,8 +378,6 @@ v0.10.0 (WIP):
     BUGFIX: Examples: Initialize the header color of the blueprints example's node builder
         End() read it for a first node without a header.
 
-    CHANGE: Examples: Share one Splitter() between the canvas and blueprints examples
-
     BUGFIX: Examples: Title each example's window with its name
         Every example was titled Application.
 
@@ -539,9 +386,6 @@ v0.10.0 (WIP):
 
     BUGFIX: Examples: Link an output to an input in the basic interaction and widgets examples
         They stored the pins in drag order as input and output, and took links between two pins of one kind.
-
-    CHANGE: Examples: Drop the shortcut toggling from the widgets example
-        The editor ignores its shortcuts while a widget inside it is active.
 
     BUGFIX: Examples: Find data and settings next to the executable
         Started from another directory, the examples failed to load their fonts and textures, and wrote their settings there.
@@ -555,7 +399,7 @@ v0.10.0 (WIP):
     BUGFIX: Examples: Fall back to feature level 10_0 and to WARP for the DX11 device
         A hardware device with feature level 11_0 was required.
 
-    BUGFIX: Examples: Scale the UI with the content scale on X11, as on Windows
+    BUGFIX: Examples: Scale the UI with the content scale on X11, as on Windows (#254), thanks @Tianyun-Xuan
         The UI was sized in pixels while the framebuffer scale was the content scale, so only a magnified corner of it showed.
 
     BUGFIX: Examples: Don't lose mouse moves or misplace the IME at display scales above 100%
@@ -573,87 +417,10 @@ v0.10.0 (WIP):
     BUGFIX: Examples: Leave .DS_Store files out of the macOS bundles
         Only the data copied next to the executables left them out.
 
-    CHANGE: Examples: Build as standard C++, without compiler extensions
-
-    CHANGE: Examples: Build with -Wall -Wextra on GCC and Clang
-
-    NEW: Examples: Choose GLFW and OpenGL on Windows
-        IMGUI_NODE_EDITOR_EXAMPLES_BACKEND takes win32 or glfw, IMGUI_NODE_EDITOR_EXAMPLES_RENDERER dx11 or opengl3.
-
-    CHANGE: Examples: Have the Find modules check the targets and components they provide
-        A missing ImGui backend or stb part now stops the configure with its name.
-
-    NEW: Editor: Report settings that don't parse to Dear ImGui's Debug Log
-        Each part that doesn't parse is named and skipped; the rest still loads, as before.
-
-    NEW: Editor: Add typed node, view and selection state
-        GetNodeState(), GetNodeStates(), SetNodeState(), SetNodeStates(), GetViewState(), SetViewState() and SetSelection(),
-        for applications that keep node layout in their documents.
-
-    NEW: Editor: Keep the state SetNodeState() gives a node the editor doesn't know, until the node is submitted
-        A document's layout can be restored before the first frame, and an undone deletion puts the node back where it was.
-
-    NEW: Editor: Report the edits the user completes, for undo
-        BeginEdits(), QueryEdit() and EndEdits() give each drag, group resize and selection change with the state before
-        and after it; navigation too, with Config::ReportNavigationEdits.
-
-    NEW: Editor: Add FormatNodeState() and ParseNodeState()
-        A node's state as text, in the format 0.9's Config::SaveNodeSettings gave, for documents that keep node layout as text.
-
-    BREAKING: Editor: Keep node layout in documents through typed node state instead of per-node callbacks
-        Config::SaveNodeSettings, Config::LoadNodeSettings and ed::RestoreNodeState() are removed. Applications
-        read node layout with ed::GetNodeStates() and restore it with ed::SetNodeStates(), also before the first
-        ed::Begin(); ed::FormatNodeState() and ed::ParseNodeState() write and read the text SaveNodeSettings
-        gave. ed::SetNodeState() takes RestoreNodeState()'s place, and ed::BeginEdits() reports what the user changes.
-
-    CHANGE: Examples: Save and restore node state in blueprints-example through typed node state
-
-    NEW: Examples: Add blueprints2-example, a blueprint editor with documents and undo
-        It keeps node layout and selection with the typed state API, one editor per document, and turns the edits the
-        user completes into undo steps.
-
-    BUGFIX: Editor: Assert on ed::Begin() inside a frame and ed::End() outside one
-        A second ed::Begin() before ed::End() began the canvas again and broke the frame's draw data,
-        and ed::End() without ed::Begin() read a null draw list. Both assert and do nothing now.
-
-    CHANGE: Canvas: Leave the last item of the content as the content left it
-        Before Dear ImGui 1.89.7, End() let later items overlap it.
-
-    BUGFIX: Canvas: Keep tables and tab bars in the canvas out of the window's auto-fit size
-        They extend the window's ideal size in canvas space, so an auto-resizing window around the canvas
-        grew to fit a table placed far away in it.
-
-    BUGFIX: Canvas: Bring the canvas' clip rectangle back to the screen exactly
-        At some positions and zoom levels it came back a fraction of a pixel inside the canvas, and renderers
-        that truncate scissor rectangles cut a row or column of pixels off its edge.
-
-    CHANGE: Canvas: Make the canvas an item of the ID Begin() takes
-        After End(), ImGui::GetItemID() is the canvas' ID; it was 0. It stays out of keyboard navigation.
-
-    BUGFIX: Editor: Keep flow markers on very long links
-        Flow paths were sampled to a fixed fraction of the curve, so on links tens of thousands of units long
-        samples collapsed onto each other and some markers were drawn at non-finite positions.
-
-    CHANGE: Editor: Find each sample of a flow path from the one before
-        Every sample searched the whole curve: at the precision long links need, a 71,000 unit link's path took
-        4.3 ms to build, now 0.7 ms.
-
-    CHANGE: Editor: Let ImCubicBezierSubdivide() and ImCubicBezierFixedStep() take temporary and const callables
-
-    CHANGE: crude_json: Take the namespace from CRUDE_JSON_NAMESPACE, crude_json by default
-        A program with another copy of crude_json can build the editor's in a namespace of its own, so both link.
-        The header relies on #pragma once alone, so that another copy's header doesn't hide it.
-
-    NEW: Canvas: Rasterize text for the view's scale, so it stays sharp when zoomed in
-        With Dear ImGui 1.92 or later and a renderer backend that sets ImGuiBackendFlags_RendererHasTextures. The scale is
-        taken in quarter octave steps from 0.5 up, and glyphs are rasterized at most 8 times their size.
-        Canvas::SetRasterizeTextForScale(false) keeps glyphs at the font's size.
-
-    NEW: Editor: Add Config::RasterizeTextForZoom, on by default
-        Text in the editor is rasterized for the zoom, as the canvas does for its view's scale. Set it to false to keep glyphs
-        at the font's size.
-
     BUGFIX: Examples: Spell the example variable right in the examples and the README (#342), thanks @vaezim
+
+    BUGFIX: Canvas: Ignore Suspend() and Resume() outside Begin() and End(), with an assert
+        They left local space with stale state, restoring the mouse from an earlier frame.
 
     BUGFIX: Examples: Show the pins of Houdini nodes in the blueprints example
         Since Stack Layout v2.1, a layout clips what is drawn in it to its bounds, and the pins were drawn in layouts they stick out of.
@@ -670,7 +437,7 @@ v0.9.3 (2023-10-14):
 
     BUGFIX: Canvas: Ensure SentinelDrawCallback cleanup (#255)
 
-    BUGFIX: Editor: Don't call Resume/Suspend on invisible canvas (#255)
+    BUGFIX: Editor: Don't call Reasume/Suspend on invisible canvas (#255)
 
 v0.9.2 (2023-09-01):
 
@@ -689,6 +456,8 @@ v0.9.2 (2023-09-01):
     CHANGE: Canvas: Don't use deprecated SetItemAllowOverlap (#250)
 
     CHANGE: Examples: Don't use deprecated SetItemAllowOverlap (#250)
+
+    CHANGE: Editor: Define IMGUI_DEFINE_MATH_OPERATORS before <imgui.h> (#209), thanks @ocornut
 
     CHANGE: Editor: Unary operator- for ImVec2 is defined by ImGui since r18955 (#248)
 

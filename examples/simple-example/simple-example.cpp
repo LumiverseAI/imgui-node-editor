@@ -11,8 +11,11 @@ struct Example:
 
     void OnStart() override
     {
-        ed::InstallSettingsHandler();
-        m_Context = ed::CreateEditor();
+        m_SettingsFile = ResolvePath("Simple.json");
+
+        ed::Config config;
+        config.SettingsFile = m_SettingsFile.c_str();
+        m_Context = ed::CreateEditor(&config);
     }
 
     void OnStop() override
@@ -50,6 +53,7 @@ struct Example:
 	    //ImGui::ShowMetricsWindow();
     }
 
+    std::string        m_SettingsFile;
     ed::EditorContext* m_Context = nullptr;
 };
 

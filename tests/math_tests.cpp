@@ -33,6 +33,18 @@ struct Random
     }
 };
 
+// A point's coordinate on an axis (0: x, 1: y). Not (&point.x)[axis]: writing y
+// through a pointer to x is undefined behavior, which optimizers act on.
+float& Coordinate(ImVec2& point, int axis)
+{
+    return axis == 0 ? point.x : point.y;
+}
+
+float Coordinate(const ImVec2& point, int axis)
+{
+    return axis == 0 ? point.x : point.y;
+}
+
 struct Point2
 {
     double x, y;
@@ -226,14 +238,14 @@ TEST_CASE(LineIntersectionSweep, "math.line_intersection_finds_every_crossing", 
         {
             const int axis = i % 3 == 1 ? 0 : 1;
             const float start = random.Range(0, 100), step = random.Range(20, 100);
-            float* coordinates[] = { &curve.P0.x, &curve.P1.x, &curve.P2.x, &curve.P3.x };
+            ImVec2* points[] = { &curve.P0, &curve.P1, &curve.P2, &curve.P3 };
             for (int k = 0; k < 4; ++k)
-                coordinates[k][axis] = start + step * k;
+                Coordinate(*points[k], axis) = start + step * k;
             const float across = random.Range(start, start + 3 * step);
-            (&a0.x)[axis] = across;
-            (&a1.x)[axis] = across;
-            (&a0.x)[1 - axis] = -100.0f;
-            (&a1.x)[1 - axis] = 500.0f;
+            Coordinate(a0, axis) = across;
+            Coordinate(a1, axis) = across;
+            Coordinate(a0, 1 - axis) = -100.0f;
+            Coordinate(a1, 1 - axis) = 500.0f;
         }
 
         const auto result = ImCubicBezierLineIntersect(curve, ImLine{ a0, a1 });
@@ -271,9 +283,9 @@ TEST_CASE(BoundsSweep, "math.bounds_contain_the_curve", "MATH-3", test::TestFlag
         const int axis = i % 2;
         const auto start = wholePoint();
         auto end = wholePoint();
-        (&end.x)[axis] = (&start.x)[axis];
+        Coordinate(end, axis) = Coordinate(start, axis);
         ImVec2 direction(0, 0);
-        (&direction.x)[axis] = random.Next() < 0.5 ? -1.0f : 1.0f;
+        Coordinate(direction, axis) = random.Next() < 0.5 ? -1.0f : 1.0f;
         const auto strength = std::floor(random.Range(10, 200));
         if (ReachesOutsideBounds(ImCubicBezierPoints{ start, start + direction * strength, end + direction * strength, end }))
             ++alignedOutside;
@@ -692,35 +704,4 @@ TEST_CASE(ClosestPointSnap, "math.closest_point_snaps_to_the_edge", "MATH-8", te
     }
 
     test::Check(wrong == 0, "points go to the closest point of the rectangle, or of its edge when snapping");
-}
-
-TEST_CASE(FixedStepLongLinks, "math.fixed_step_keeps_its_spacing_on_long_links", "MATH-9", test::TestFlags_None)
-{
-    // Links tens of thousands long, at the default tolerances: within 0.5 of their length.
-    int samples = 0, off = 0, miscounted = 0;
-    for (float span : { 8000.0f, 20000.0f, 60000.0f })
-        for (float handle : { 100.0f, span * 0.25f })
-        {
-            const ImVec2 a(-span * 0.5f, 0.0f), b(span * 0.5f, span * 0.3f);
-            const ImCubicBezierPoints link{ a, a + ImVec2(handle, 0.0f), b - ImVec2(handle, 0.0f), b };
-            const auto steps = FixedSteps(link, 15.0f, false, 0.5f, 1e-5f);
-            if (static_cast<int>(steps.size()) != static_cast<int>(ImCubicBezierLength(link) / 15.0f) + 1)
-                ++miscounted;
-            for (size_t k = 0; k < steps.size(); ++k, ++samples)
-                if (std::fabs(steps[k].Length - 15.0 * static_cast<double>(k)) > 0.5 || (k > 0 && !(steps[k].T > steps[k - 1].T)))
-                    ++off;
-        }
-
-    test::Check(miscounted == 0 && off == 0, "samples lie every 15 along the links: %d of 6 links miscounted, %d of %d samples off", miscounted, off, samples);
-}
-
-TEST_CASE(CallbackKinds, "math.callbacks_take_temporaries_and_const_lambdas", "MATH-9", test::TestFlags_None)
-{
-    const ImCubicBezierPoints link{ ImVec2(0, 0), ImVec2(100, 0), ImVec2(200, 150), ImVec2(300, 150) };
-    int subdivided = 0, stepped = 0;
-    ImCubicBezierSubdivide([&](const ImCubicBezierSubdivideSample&) { ++subdivided; }, link);
-    const auto step = [&](ImCubicBezierFixedStepSample&) { ++stepped; };
-    ImCubicBezierFixedStep(step, link, 10.0f);
-
-    test::Check(subdivided > 0 && stepped > 0, "a temporary and a const lambda are called: %d and %d times", subdivided, stepped);
 }

@@ -7,8 +7,8 @@
 // CREDITS
 //   Written by Michal Cichon
 //------------------------------------------------------------------------------
-# ifndef IMGUI_NODE_EDITOR_INTERNAL_H
-# define IMGUI_NODE_EDITOR_INTERNAL_H
+# ifndef __IMGUI_NODE_EDITOR_INTERNAL_H__
+# define __IMGUI_NODE_EDITOR_INTERNAL_H__
 # pragma once
 
 
@@ -21,11 +21,6 @@
 
 //------------------------------------------------------------------------------
 # include <imgui.h>
-# if !defined(IMGUI_VERSION_NUM)
-#     error IMGUI_VERSION_NUM is not defined, please update Dear ImGui copy to at least 1.89 (November 2022)
-# elif IMGUI_VERSION_NUM < 18900
-#     error Please update Dear ImGui copy to at least 1.89 (November 2022)
-# endif
 # include <imgui_internal.h>
 # include "imgui_extra_math.h"
 # include "imgui_bezier_math.h"
@@ -33,10 +28,8 @@
 
 # include "crude_json.h"
 
-# include <cmath>
 # include <vector>
 # include <string>
-# include <map>
 
 
 //------------------------------------------------------------------------------
@@ -47,7 +40,7 @@ namespace Detail {
 
 //------------------------------------------------------------------------------
 namespace ed = ax::NodeEditor::Detail;
-namespace json = CRUDE_JSON_NAMESPACE;
+namespace json = crude_json;
 
 
 //------------------------------------------------------------------------------
@@ -56,8 +49,7 @@ using std::string;
 
 
 //------------------------------------------------------------------------------
-// To ImGui's Debug Log window, for rare events such as settings that don't parse.
-void Log(const char* fmt, ...) IM_FMTARGS(1);
+void Log(const char* fmt, ...);
 
 
 //------------------------------------------------------------------------------
@@ -68,6 +60,56 @@ inline ImVec2 ImGui_GetMouseClickPos(ImGuiMouseButton buttonIndex);
 
 
 //------------------------------------------------------------------------------
+// https://stackoverflow.com/a/36079786
+# define DECLARE_HAS_MEMBER(__trait_name__, __member_name__)                         \
+                                                                                     \
+    template <typename __boost_has_member_T__>                                       \
+    class __trait_name__                                                             \
+    {                                                                                \
+        using check_type = ::std::remove_const_t<__boost_has_member_T__>;            \
+        struct no_type {char x[2];};                                                 \
+        using  yes_type = char;                                                      \
+                                                                                     \
+        struct  base { void __member_name__() {}};                                   \
+        struct mixin : public base, public check_type {};                            \
+                                                                                     \
+        template <void (base::*)()> struct aux {};                                   \
+                                                                                     \
+        template <typename U> static no_type  test(aux<&U::__member_name__>*);       \
+        template <typename U> static yes_type test(...);                             \
+                                                                                     \
+        public:                                                                      \
+                                                                                     \
+        static constexpr bool value = (sizeof(yes_type) == sizeof(test<mixin>(0)));  \
+    }
+
+DECLARE_HAS_MEMBER(HasFringeScale, _FringeScale);
+
+# undef DECLARE_HAS_MEMBER
+
+struct FringeScaleRef
+{
+    // Overload is present when ImDrawList does have _FringeScale member variable.
+    template <typename T>
+    static float& Get(typename std::enable_if<HasFringeScale<T>::value, T>::type* drawList)
+    {
+        return drawList->_FringeScale;
+    }
+
+    // Overload is present when ImDrawList does not have _FringeScale member variable.
+    template <typename T>
+    static float& Get(typename std::enable_if<!HasFringeScale<T>::value, T>::type*)
+    {
+        static float placeholder = 1.0f;
+        return placeholder;
+    }
+};
+
+static inline float& ImFringeScaleRef(ImDrawList* drawList)
+{
+    return FringeScaleRef::Get<ImDrawList>(drawList);
+}
+
 struct FringeScaleScope
 {
 # if IMGUI_VERSION_NUM >= 19292
@@ -86,14 +128,14 @@ private:
     float m_LastPixelDensity;
 # else
     FringeScaleScope(float scale)
-        : m_LastFringeScale(ImGui::GetWindowDrawList()->_FringeScale)
+        : m_LastFringeScale(ImFringeScaleRef(ImGui::GetWindowDrawList()))
     {
-        ImGui::GetWindowDrawList()->_FringeScale = scale;
+        ImFringeScaleRef(ImGui::GetWindowDrawList()) = scale;
     }
 
     ~FringeScaleScope()
     {
-        ImGui::GetWindowDrawList()->_FringeScale = m_LastFringeScale;
+        ImFringeScaleRef(ImGui::GetWindowDrawList()) = m_LastFringeScale;
     }
 
 private:
@@ -115,17 +157,10 @@ using ax::NodeEditor::PinKind;
 using ax::NodeEditor::StyleColor;
 using ax::NodeEditor::StyleVar;
 using ax::NodeEditor::SaveReasonFlags;
-using ax::NodeEditor::SettingsContentFlags;
 
 using ax::NodeEditor::NodeId;
 using ax::NodeEditor::PinId;
 using ax::NodeEditor::LinkId;
-
-using ax::NodeEditor::NodeState;
-using ax::NodeEditor::ViewState;
-using ax::NodeEditor::SelectionState;
-using ax::NodeEditor::EditType;
-using ax::NodeEditor::Edit;
 
 struct ObjectId final: Details::SafePointerType<ObjectId>
 {
@@ -175,7 +210,7 @@ struct ObjectWrapper
 
     bool operator<(const ObjectWrapper& rhs) const
     {
-        return m_ID.Get() < rhs.m_ID.Get();
+        return m_ID.AsPointer() < rhs.m_ID.AsPointer();
     }
 };
 
@@ -231,6 +266,7 @@ struct Object
     virtual bool EndDrag() { return false; }
     virtual ImVec2 DragStartLocation() { return GetBounds().Min; }
 
+    virtual bool IsDraggable() { bool result = AcceptDrag(); EndDrag(); return result; }
     virtual bool IsSelectable() { return false; }
 
     virtual bool TestHit(const ImVec2& point, float extraThickness = 0.0f) const
@@ -379,6 +415,7 @@ struct Node final: Object
 
     bool     m_HighlightConnectedLinks;
 
+    bool     m_RestoreState;
     bool     m_CenterOnScreen;
 
     Node(EditorContext* editor, NodeId id)
@@ -394,12 +431,9 @@ struct Node final: Object
         , m_BorderColor(IM_COL32_BLACK)
         , m_BorderWidth(0)
         , m_Rounding(0)
-        , m_GroupColor(IM_COL32_BLACK)
-        , m_GroupBorderColor(IM_COL32_BLACK)
-        , m_GroupBorderWidth(0)
-        , m_GroupRounding(0)
         , m_GroupBounds()
         , m_HighlightConnectedLinks(false)
+        , m_RestoreState(false)
         , m_CenterOnScreen(false)
     {
     }
@@ -428,6 +462,20 @@ struct Node final: Object
     virtual Node* AsNode() override final { return this; }
 };
 
+enum LinkPathType {
+    LinkPathType_Default,
+    LinkPathType_Under_Over,
+    LinkPathType_Over_Under,
+    LinkPathType_Under_Under
+};
+
+// The path of a link: one curve, or (angled links) rounded corners joined by straight segments
+struct LinkPath {
+    ImCubicBezierPoints m_Segments[7];
+    int m_SegmentCount;
+    LinkPathType m_Type;
+};
+
 struct Link final: Object
 {
     using IdType = LinkId;
@@ -447,7 +495,6 @@ struct Link final: Object
         , m_StartPin(nullptr)
         , m_EndPin(nullptr)
         , m_Color(IM_COL32_WHITE)
-        , m_HighlightColor(IM_COL32_WHITE)
         , m_Thickness(1.0f)
     {
     }
@@ -462,6 +509,8 @@ struct Link final: Object
     void UpdateEndpoints();
 
     ImCubicBezierPoints GetCurve() const;
+    LinkPathType GetPathType(ImRect& fromRect, ImRect& toRect) const;
+    LinkPath GetPath() const;
 
     virtual bool TestHit(const ImVec2& point, float extraThickness = 0.0f) const override final;
     virtual bool TestHit(const ImRect& rect, bool allowIntersect = true) const override final;
@@ -480,20 +529,26 @@ struct NodeSettings
     ImVec2 m_Location;
     ImVec2 m_Size;
     ImVec2 m_GroupSize;
-    float  m_ZPosition;
     bool   m_WasUsed;
-    bool   m_WasLoaded;
+
+    bool            m_Saved;
+    bool            m_IsDirty;
+    SaveReasonFlags m_DirtyReason;
 
     NodeSettings(NodeId id)
         : m_ID(id)
         , m_Location(0, 0)
         , m_Size(0, 0)
         , m_GroupSize(0, 0)
-        , m_ZPosition(0.0f)
         , m_WasUsed(false)
-        , m_WasLoaded(false)
+        , m_Saved(false)
+        , m_IsDirty(false)
+        , m_DirtyReason(SaveReasonFlags::None)
     {
     }
+
+    void ClearDirty();
+    void MakeDirty(SaveReasonFlags reason);
 
     json::value Serialize();
 
@@ -506,7 +561,7 @@ struct Settings
     bool                 m_IsDirty;
     SaveReasonFlags      m_DirtyReason;
 
-    vector<NodeSettings> m_Nodes; // sorted by ID
+    vector<NodeSettings> m_Nodes;
     vector<ObjectId>     m_Selection;
     ImVec2               m_ViewScroll;
     float                m_ViewZoom;
@@ -523,15 +578,14 @@ struct Settings
 
     NodeSettings* AddNode(NodeId id);
     NodeSettings* FindNode(NodeId id);
-    void RemoveNode(NodeId id); // empties the entry: every node object has one until it's freed
-    void EraseNode(NodeId id);
+    void RemoveNode(NodeId id);
 
-    void ClearDirty();
-    void MakeDirty(SaveReasonFlags reason);
+    void ClearDirty(Node* node = nullptr);
+    void MakeDirty(SaveReasonFlags reason, Node* node = nullptr);
 
-    std::string Serialize(SettingsContentFlags content);
+    std::string Serialize();
 
-    static bool Parse(const std::string& string, Settings& settings, SettingsContentFlags content);
+    static bool Parse(const std::string& string, Settings& settings);
 };
 
 struct Control
@@ -539,7 +593,6 @@ struct Control
     Object* HotObject;
     Object* ActiveObject;
     Object* ClickedObject;
-    int     ClickedButtonIndex; // of ClickedObject, or -1
     Object* DoubleClickedObject;
     Node*   HotNode;
     Node*   ActiveNode;
@@ -559,16 +612,15 @@ struct Control
     int     BackgroundDoubleClickButtonIndex;
 
     Control()
-        : Control(nullptr, nullptr, nullptr, -1, nullptr, false, false, -1, -1)
+        : Control(nullptr, nullptr, nullptr, nullptr, false, false, -1, -1)
     {
     }
 
-    Control(Object* hotObject, Object* activeObject, Object* clickedObject, int clickedButtonIndex, Object* doubleClickedObject,
+    Control(Object* hotObject, Object* activeObject, Object* clickedObject, Object* doubleClickedObject,
         bool backgroundHot, bool backgroundActive, int backgroundClickButtonIndex, int backgroundDoubleClickButtonIndex)
         : HotObject(hotObject)
         , ActiveObject(activeObject)
         , ClickedObject(clickedObject)
-        , ClickedButtonIndex(clickedButtonIndex)
         , DoubleClickedObject(doubleClickedObject)
         , HotNode(nullptr)
         , ActiveNode(nullptr)
@@ -789,7 +841,7 @@ struct EditorAction
     virtual CreateItemAction*   AsCreateItem()   { return nullptr; }
     virtual DeleteItemsAction*  AsDeleteItems()  { return nullptr; }
     virtual ContextMenuAction*  AsContextMenu()  { return nullptr; }
-    virtual ShortcutAction* AsShortcut() { return nullptr; }
+    virtual ShortcutAction* AsCutCopyPaste() { return nullptr; }
 
     EditorContext* Editor;
 };
@@ -819,7 +871,6 @@ struct NavigateAction final: EditorAction
     ImVec2          m_Scroll;
     ImVec2          m_ScrollStart;
     ImVec2          m_ScrollDelta;
-    bool            m_IsUserNavigation; // the view changes for the user's input, not for the application's
 
     NavigateAction(EditorContext* editor, ImGuiEx::Canvas& canvas);
 
@@ -839,20 +890,27 @@ struct NavigateAction final: EditorAction
     void FinishNavigation();
 
     bool MoveOverEdge(const ImVec2& canvasSize);
-    bool IsSettled() const { return !m_IsActive && !m_Animation.IsPlaying() && !m_MovingOverEdge; }
     void StopMoveOverEdge();
+    bool IsMovingOverEdge() const { return m_MovingOverEdge; }
     ImVec2 GetMoveScreenOffset() const { return m_MoveScreenOffset; }
 
+    void SetWindow(ImVec2 position, ImVec2 size);
+    ImVec2 GetWindowScreenPos() const { return m_WindowScreenPos; };
+    ImVec2 GetWindowScreenSize() const { return m_WindowScreenSize; };
+
     ImGuiEx::CanvasView GetView() const;
+    ImVec2 GetViewOrigin() const;
+    float GetViewScale() const;
 
     void SetViewRect(const ImRect& rect);
     ImRect GetViewRect() const;
 
     void ClampZoom();
-    ImRect ClampViewRect(const ImRect& rect) const; // the rectangle around the same center at a zoom within the zoom levels
 
 private:
     ImGuiEx::Canvas&   m_Canvas;
+    ImVec2             m_WindowScreenPos;
+    ImVec2             m_WindowScreenSize;
 
     NavigateAnimation  m_Animation;
     NavigationReason   m_Reason;
@@ -861,9 +919,8 @@ private:
     bool               m_MovingOverEdge;
     ImVec2             m_MoveScreenOffset;
 
-    vector<float>      m_ZoomLevels;       // ascending, unique and positive
-    float              m_SmoothZoomPower;
-    float              m_WheelSteps;       // left over from fractional wheel deltas in stepped mode
+    const float*       m_ZoomLevels;
+    int                m_ZoomLevelCount;
 
     bool HandleZoom(const Control& control);
 
@@ -871,7 +928,8 @@ private:
 
     float GetNextZoom(float steps);
     float MatchSmoothZoom(float steps);
-    float MatchZoom(int steps);
+    float MatchZoom(int steps, float fallbackZoom);
+    int MatchZoomIndex(int direction);
 
     static const float s_DefaultZoomLevels[];
     static const int   s_DefaultZoomLevelCount;
@@ -901,9 +959,6 @@ struct SizeAction final: EditorAction
     virtual bool IsDragging() override final { return m_IsActive; }
 
     const ImRect& GetStartGroupBounds() const { return m_StartGroupBounds; }
-
-    void Flush();  // completes a resize that has ended
-    void Cancel(); // puts the node back as the resize found it
 
 private:
     NodeRegion GetRegion(Node* node);
@@ -942,10 +997,6 @@ struct DragAction final: EditorAction
     virtual void ForgetDeletedObjects() override final;
 
     virtual DragAction* AsDrag() override final { return this; }
-
-    bool Involves(const Node* node) const;
-    void Flush();  // completes a drag that has ended
-    void Cancel(); // puts the dragged nodes back where the drag found them
 };
 
 struct SelectAction final: EditorAction
@@ -1027,7 +1078,7 @@ struct ShortcutAction final: EditorAction
 
     virtual void ForgetDeletedObjects() override final;
 
-    virtual ShortcutAction* AsShortcut() override final { return this; }
+    virtual ShortcutAction* AsCutCopyPaste() override final { return this; }
 
     bool Begin();
     void End();
@@ -1138,6 +1189,8 @@ struct DeleteItemsAction final: EditorAction
 
     virtual void ShowMetrics() override final;
 
+    virtual void ForgetDeletedObjects() override final;
+
     virtual DeleteItemsAction* AsDeleteItems() override final { return this; }
 
     bool Add(Object* object);
@@ -1154,31 +1207,19 @@ struct DeleteItemsAction final: EditorAction
 private:
     enum IteratorType { Unknown, Link, Node };
 
-    struct Candidate
-    {
-        explicit Candidate(ObjectId id): ID(id) {}
-
-        ObjectId ID;
-        bool     IsDeleted = false; // link deleted together with its node, only reported
-        PinId    StartPinId;        // pins of a deleted link, which may be freed when it is reported
-        PinId    EndPinId;
-    };
-
-    void AddCandidate(Object* object);
-    void DeleteDeadPins(ed::Node* node);
-    void DeleteDeadLinks();
+    void DeleteDeadLinks(NodeId nodeId);
+    void DeleteDeadPins(NodeId nodeId);
 
     bool QueryItem(ObjectId* itemId, IteratorType itemType);
     void RemoveItem(bool deleteDependencies);
-    Candidate DropCurrentItem();
+    Object* DropCurrentItem();
 
-    vector<ObjectId>  m_ManuallyDeletedObjects;
+    vector<Object*> m_ManuallyDeletedObjects;
 
-    IteratorType      m_CurrentItemType;
-    bool              m_HasCurrentItem; // returned by a query, and neither accepted nor rejected yet
-    vector<Candidate> m_Candidates;
-    int               m_CandidateItemIndex;
-    bool              m_IsReportingDeletedLinks;
+    IteratorType    m_CurrentItemType;
+    bool            m_HasCurrentItem; // returned by a query, and neither accepted nor rejected yet
+    vector<Object*> m_CandidateObjects;
+    int             m_CandidateItemIndex;
 };
 
 struct NodeBuilder
@@ -1207,7 +1248,7 @@ struct NodeBuilder
     bool    m_IsHoverBlocked;
     ImGuiID m_BlockedHoveredId;
 
-    // Nodes and pins that couldn't be built, whose End calls are ignored too.
+    // Misnested nodes and pins, whose End calls are ignored too.
     int m_IgnoredNodes;
     int m_IgnoredPins;
 
@@ -1290,33 +1331,15 @@ private:
 struct Config: ax::NodeEditor::Config
 {
     Config(const ax::NodeEditor::Config* config);
-};
 
-// [NodeEditor][<name>] sections of imgui.ini in one ImGui context, kept whether
-// an editor with that name exists or not.
-struct SettingsStore
-{
-    ImGuiContext*              Context = nullptr;
-    std::map<string, string>   Sections;       // JSON by editor name
-    vector<string>             ReadSections;   // read by the LoadIniSettingsFromMemory() in progress
-    vector<EditorContext*>     Editors;        // live editors with a section here
-};
+    std::string Load();
+    std::string LoadNode(NodeId nodeId);
 
-// The data an Edit points to.
-struct EditRecord
-{
-    EditType          Type = EditType::Move;
-    vector<NodeState> NodesBefore;
-    vector<NodeState> NodesAfter;
-    vector<NodeId>    SelectedNodesBefore;
-    vector<LinkId>    SelectedLinksBefore;
-    vector<NodeId>    SelectedNodesAfter;
-    vector<LinkId>    SelectedLinksAfter;
-    ViewState         ViewBefore;
-    ViewState         ViewAfter;
+    void BeginSave();
+    bool Save(const std::string& data, SaveReasonFlags flags);
+    bool SaveNode(NodeId nodeId, const std::string& data, SaveReasonFlags flags);
+    void EndSave();
 };
-
-void InstallSettingsHandler(ImGuiContext* context);
 
 enum class SuspendFlags : uint8_t
 {
@@ -1339,17 +1362,6 @@ struct IMGUI_NODE_EDITOR_API EditorContext
 
     void Begin(const char* id, const ImVec2& size = ImVec2(0, 0));
     void End();
-
-    void LoadSettingsFromMemory(const char* data, size_t size);
-    const char* SaveSettingsToMemory(size_t* outSize);
-    bool WantSaveSettings() const;
-    void ClearWantSaveSettings();
-    SaveReasonFlags GetSettingsChangeReason() const { return m_SettingsChangeReason; }
-
-    const string& GetSettingsName() const { return m_SettingsName; }
-    void ApplySettings(const string& data);
-    bool StoreSettings();
-    void DetachSettingsStore() { m_SettingsStore = nullptr; }
 
     bool DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU32 color, float thickness);
 
@@ -1376,27 +1388,10 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     void SetNodeZPosition(NodeId nodeId, float z);
     float GetNodeZPosition(NodeId nodeId);
 
+    void MarkNodeToRestoreState(Node* node);
     void UpdateNodeState(Node* node);
 
     void RemoveSettings(Object* object);
-
-    bool ForgetNode(NodeId nodeId);
-    void ClearState();
-
-    bool      GetNodeState(NodeId nodeId, NodeState& state);
-    int       GetNodeStates(NodeState* states, int capacity);
-    bool      SetNodeState(const NodeState& state);
-    ViewState GetViewState() const;
-    bool      SetViewState(const ViewState& state, float duration);
-    bool      SetSelection(const NodeId* nodes, int nodeCount, const LinkId* links, int linkCount);
-
-    const char* FormatNodeState(const NodeState& state, size_t* outSize);
-    static bool ParseNodeState(const char* data, size_t size, NodeState& state);
-
-    bool BeginEdits();
-    bool QueryEdit(Edit& edit);
-    void EndEdits();
-    void RecordEdit(EditRecord&& edit) { m_CompletedEdits.push_back(std::move(edit)); }
 
     void ClearSelection();
     void SelectObject(Object* object);
@@ -1422,8 +1417,7 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     int BreakLinks(NodeId nodeId);
     int BreakLinks(PinId pinId);
 
-    void FindLinksBetweenNodes(const vector<ObjectWrapper<Node>>& nodes, vector<Link*>& result); // live links, 'nodes' sorted by ID
-    void FindLinksForDeletedPins(vector<Link*>& result); // live or not
+    void FindLinksForNode(NodeId nodeId, vector<Link*>& result, bool add = false);
 
     bool PinHadAnyLinks(PinId pinId);
 
@@ -1439,14 +1433,19 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     bool IsFocused();
     bool IsHovered() const;
     bool IsHoveredWithoutOverlapp() const;
+    bool OwnsNavigateButton() const; // the press of the navigate button was taken by the editor's background
     bool CanAcceptUserInput() const;
-    bool IsOtherItemActive() const; // an item other than the editor's own, such as a text field in a node
 
     // True for a frame whose host window skips items. Item rectangles are stale
     // then, so nothing is measured, interacted with or saved.
     bool IsFrozen() const { return m_IsFrozen; }
 
+    // The editor ignores the mouse and the keyboard until the next Begin(): no pan, zoom, selection, drag, shortcut.
+    // Call it when a widget inside a node uses the mouse itself (e.g. a plot which is dragged or zoomed with the wheel).
+    void DisableUserInputThisFrame();
+
     void MakeDirty(SaveReasonFlags reason);
+    void MakeDirty(SaveReasonFlags reason, Node* node);
 
     int CountLiveNodes() const;
     int CountLivePins() const;
@@ -1535,7 +1534,7 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     float AlignPointToGrid(float p) const
     {
         if (!ImGui::GetIO().KeyAlt)
-            return std::floor(p / 16.0f) * 16.0f;
+            return p - ImFmod(p, 16.0f);
         else
             return p;
     }
@@ -1550,21 +1549,9 @@ struct IMGUI_NODE_EDITOR_API EditorContext
 private:
     void LoadSettings();
     void RestoreView();
-    void UpdateSettings();
     void SaveSettings();
 
-    // Each returns whether the node changed, and marks it dirty if it did.
-    bool PlaceNode(Node* node, const ImVec2& position);
-    bool ResizeGroup(Node* node, const ImVec2& size);
-    bool ChangeZPosition(Node* node, float z);
-
-    void SettleGesturesOn(Node* node);
-
-    void RecordSelectionEdit(const vector<Object*>& before);
-    void RecordNavigationEdit();
-
     void ForgetDeletedObjects();
-    void FreeDeletedObjects();
 
     Control BuildControl(bool allowOffscreen);
 
@@ -1580,6 +1567,9 @@ private:
     bool                m_IsFocused;
     bool                m_IsHovered;
     bool                m_IsHoveredWithoutOverlapp;
+    ImGuiID             m_BackgroundId = 0;
+    bool                m_IsNavigatePressInside = false; // the navigate button was pressed inside the editor, on no item that owns it
+    bool                m_EnableUserInput;  // When false, discard all user inputs (see DisableUserInputThisFrame())
 
     bool                m_ShortcutsEnabled;
 
@@ -1587,8 +1577,7 @@ private:
     int                 m_BeginColorStackSize;
     int                 m_BeginVarStackSize;
 
-    vector<ObjectWrapper<Node>> m_Nodes;     // in draw order
-    vector<ObjectWrapper<Node>> m_NodeIndex; // the same nodes, sorted by ID
+    vector<ObjectWrapper<Node>> m_Nodes;
     vector<ObjectWrapper<Pin>>  m_Pins;
     vector<ObjectWrapper<Link>> m_Links;
 
@@ -1636,24 +1625,9 @@ private:
     bool                m_IsSettingsLoaded;
     bool                m_IsInitialized;
     Settings            m_Settings;
-    string              m_SettingsName;
-    SettingsStore*      m_SettingsStore;
-    bool                m_HasMemorySettings;    // set before the first Begin(), by LoadSettingsFromMemory() or ClearState()
-    string              m_SettingsMemory;       // returned by SaveSettingsToMemory()
-    string              m_NodeStateMemory;      // returned by FormatNodeState()
-    bool                m_HasSettingsChanged;   // since ClearWantSaveSettings()
-    SaveReasonFlags     m_SettingsChangeReason;
-    double              m_SettingsChangeTime;
-    double              m_FrameTime;
-
-    vector<EditRecord>  m_CompletedEdits;       // by the user, since the last End()
-    vector<EditRecord>  m_ReportedEdits;        // from the last End() until the next
-    size_t              m_NextReportedEdit;
-    bool                m_IsInEdits;            // between BeginEdits() and EndEdits()
-    ImRect              m_ReportedView;         // where the last settled navigation left the view
 
     ImDrawList*         m_DrawList;
-    int                 m_CanvasChannel;        // the channel of the editor's splitter the canvas keeps its commands in
+    int                 m_ExternalChannel;
     ImDrawListSplitter  m_Splitter;
 };
 
@@ -1669,4 +1643,4 @@ private:
 
 
 //------------------------------------------------------------------------------
-# endif // IMGUI_NODE_EDITOR_INTERNAL_H
+# endif // __IMGUI_NODE_EDITOR_INTERNAL_H__

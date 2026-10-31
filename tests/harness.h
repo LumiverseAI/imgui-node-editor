@@ -107,6 +107,12 @@ void Ctrl(bool down);
 
 
 //------------------------------------------------------------------------------
+// The current editor's zoom factor, 2 at 200%. ed::GetCurrentZoom() returns its
+// inverse.
+float CurrentZoom();
+
+
+//------------------------------------------------------------------------------
 // Rendered output flattened to one entry per index, so comparisons don't depend
 // on how commands are split.
 struct Geometry
@@ -132,9 +138,8 @@ long         FirstIndexOf(const Geometry& geometry, ImU32 color);
 
 
 //------------------------------------------------------------------------------
-// Application side storage of editor settings. A Session loads Global with
-// LoadSettingsFromMemory() before its first frame, and stores the result of
-// SaveSettingsToMemory() after every frame that changed the settings.
+// Application side storage of editor settings, through Config::LoadSettings and
+// Config::SaveSettings.
 struct Storage
 {
     std::string Global;

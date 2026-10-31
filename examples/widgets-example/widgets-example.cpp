@@ -46,8 +46,11 @@ struct Example:
 
     void OnStart() override
     {
-        ed::InstallSettingsHandler();
-        m_Context = ed::CreateEditor();
+        m_SettingsFile = ResolvePath("Widgets.json");
+
+        ed::Config config;
+        config.SettingsFile = m_SettingsFile.c_str();
+        m_Context = ed::CreateEditor(&config);
     }
 
     void OnStop() override
@@ -392,8 +395,8 @@ struct Example:
                         }
                     }
                 }
-                ed::EndCreate();
             }
+            ed::EndCreate();
 
             // Handle deletion action ---------------------------------------------------------------------------
             if (ed::BeginDelete())
@@ -413,8 +416,8 @@ struct Example:
                         }
                     }
                 }
-                ed::EndDelete();
             }
+            ed::EndDelete();
 
         ed::End();
         ed::SetCurrentEditor(nullptr);
@@ -423,6 +426,7 @@ struct Example:
         //ImGui::ShowDemoWindow();
     }
 
+    std::string        m_SettingsFile;
     ed::EditorContext* m_Context = nullptr;
 
     ImVector<LinkInfo>   m_Links;                // List of live links. It is dynamic unless you want to create read-only view over nodes.

@@ -1,6 +1,12 @@
 # Node Editor in ImGui
 
-[![build](https://github.com/thedmd/imgui-node-editor/actions/workflows/build.yml/badge.svg)](https://github.com/thedmd/imgui-node-editor/actions/workflows/build.yml)
+[![tests](https://github.com/pthom/imgui-node-editor/actions/workflows/tests.yml/badge.svg?branch=imgui_bundle)](https://github.com/pthom/imgui-node-editor/actions/workflows/tests.yml)
+
+> **This is the fork used by [Dear ImGui Bundle](https://github.com/pthom/imgui_bundle).** It can be used without it.
+> See [what this fork adds](fork_imgui_bundle.md): popups, combos and multiline text inside nodes, node width, fixes, automated tests.
+>
+> The `imgui_bundle` branch is **rebased** when upstream moves (its history is rewritten): pin a tag (`bundle_YYYYMMDD`) or a commit
+> rather than tracking the branch.
 
 ## About
 
@@ -10,8 +16,8 @@ Project purpose is to serve as a basis for more complex solutions like blueprint
 
 ![node_editor_overview](https://user-images.githubusercontent.com/1197433/89328475-c01bc680-d68d-11ea-88bf-8c4155480927.gif)
 
-Node Editor is built around an idea "draw your content, we do the rest", which means interactions are handled by editor, content rendering is handled by user. Editor will take care of:
- * placing your node in the world
+Node Editor is build around an idea "draw your content, we do the rest", which mean interactions are handled by editor, content rendering is handled by user. Editor will take care of:
+ * placing your node in the word
  * dragging nodes
  * zoom and scrolling
  * selection
@@ -41,17 +47,52 @@ Here are some highlights:
  * Basic shortcuts support (cut/copy/paste/delete)
  * ImGui style API
 
-Editor is used to implement blueprint editor in Spark CE engine, it proved itself there by allowing to do everything we needed. Therefore it is now slowly moving into stable state from being a prototype.
+Editor is used to implement blueprint editor in Spark CE engine, it proved itself there by allowing to do everything we needed. Therefore it is now slowly moving into stable state from beeing a prototype.
 
 Note: Project recently was restructured to mimic ImGui layout.
 
 Please report issues or questions if something isn't clear.
 
-Changes land on the `develop` branch, which `master` follows at releases. Pull requests go to `develop`.
+## Default Bindings
+
+The editor reacts to the following mouse and keyboard inputs out of the box.
+Mouse buttons are configurable via `Config::DragButtonIndex`,
+`SelectButtonIndex`, `NavigateButtonIndex` and `ContextMenuButtonIndex`
+(defaults: left button for drag/select, right button for navigate/context).
+Keyboard shortcuts only fire when `AreShortcutsEnabled()` returns `true`.
+
+### Mouse
+
+| Input                                | Action                                                                |
+|--------------------------------------|-----------------------------------------------------------------------|
+| Left click on background             | Clear selection                                                       |
+| Left click on node or link           | Select that object (replaces selection)                               |
+| `Ctrl` + left click                  | Toggle the clicked object in or out of the selection                  |
+| Left drag on background              | Rubber-band select nodes                                              |
+| `Shift` + left drag on background    | Rubber-band select Group nodes                                        |
+| `Alt` + left drag on background      | Rubber-band select links                                              |
+| `Ctrl` + left drag (rubber band)     | Keep the previous selection while lassoing                            |
+| Left drag on a node                  | Move the node (and members of any selected Group)                     |
+| `Shift` + left drag on a node        | Move only the directly-selected nodes                                 |
+| Right drag                           | Pan the canvas                                                        |
+| Right click                          | Open the context menu                                                 |
+| Mouse wheel                          | Zoom in or out (smooth zoom controlled by `Config::EnableSmoothZoom`) |
+| Double-click on a link / background  | Forwarded to the user via the link/background double-click queries    |
+
+### Keyboard
+
+| Input                          | Action                                                            |
+|--------------------------------|-------------------------------------------------------------------|
+| `F` over a node, pin or Group  | Center that object                                                |
+| `F` with a non-empty selection | Center selection                                                  |
+| `F` over the empty background  | Center all content                                                |
+| `Shift` + `F`                  | Same as `F`, but zooms the targeted object or selection           |
+| `Space`                        | Open the context menu at the mouse position                       |
+| `Ctrl` + `X` / `C` / `V` / `D` | Cut / Copy / Paste / Duplicate (forwarded as actions to the user) |
 
 ## Dependencies
 
- * Dear ImGui 1.89 (November 2022) or newer, tested up to 1.93.0 WIP
+ * Dear ImGui 1.80 or newer, tested up to 1.93.0 WIP
  * C++14
 
 ### Dependencies for examples:
@@ -60,6 +101,10 @@ Changes land on the `develop` branch, which `master` follows at releases. Pull r
  * stb, and GLFW on macOS, Linux, and Windows with the GLFW backend
 
 CMake fetches all of them at revisions pinned in [examples/cmake](../examples/cmake). An installed GLFW package is used when found.
+
+### Optional extension you can pull into your local copy of ImGui node editor can take advantage of:
+ * ~~https://github.com/thedmd/imgui/tree/feature/draw-list-fringe-scale (for sharp rendering, while zooming)~~ It is part of ImGui since 1.80 release
+ * https://github.com/thedmd/imgui/tree/feature/extra-keys (for extra shortcuts)
 
 ## Building / Installing
 
@@ -90,13 +135,13 @@ cmake -S tests -B build-tests
 cmake --build build-tests --config Debug
 ctest --test-dir build-tests -C Debug
 ```
-`-DIMGUI_DIR=<path>` tests against another copy of Dear ImGui. `-DIMGUI_NODE_EDITOR_TESTS_SANITIZE=ON` builds with AddressSanitizer and adds the tests that detect memory errors. Tests of open issues are expected to fail until the issue is fixed.
+`-DIMGUI_DIR=<path>` tests against another copy of Dear ImGui. The suite needs 1.89 or newer; with an older one only a compatibility test is built, which drives the editor with any Dear ImGui from 1.80. `-DIMGUI_NODE_EDITOR_TESTS_SANITIZE=ON` builds with AddressSanitizer and adds the tests that detect memory errors. Tests of open issues are expected to fail until the issue is fixed.
 
-`python tests/imgui_walk.py --imgui-repo <clone of Dear ImGui> --work <directory>` runs the suite against every Dear ImGui release from 1.89 on, and accepts `-strict` and docking variants of revisions.
+`python tests/imgui_walk.py --imgui-repo <clone of Dear ImGui> --work <directory>` runs the tests against every Dear ImGui release from 1.80 on, and accepts `-strict` and docking variants of revisions.
 
 ### Quick Start
 
-Main node editor header is located in [imgui_node_editor.h](../imgui_node_editor.h). [API.md](API.md) describes the rules that span the API: the order of calls in a frame, IDs, creating and deleting, input, persistence and coordinates.
+Main node editor header is located in [imgui_node_editor.h](../imgui_node_editor.h).
 
 Minimal example of one node can be found in [simple-example.cpp](../examples/simple-example/simple-example.cpp).
 Press 'F' in editor to focus on editor content if you see only grid.
@@ -114,8 +159,11 @@ struct Example:
 
     void OnStart() override
     {
-        ed::InstallSettingsHandler();
-        m_Context = ed::CreateEditor();
+        m_SettingsFile = ResolvePath("Simple.json");
+
+        ed::Config config;
+        config.SettingsFile = m_SettingsFile.c_str();
+        m_Context = ed::CreateEditor(&config);
     }
 
     void OnStop() override
@@ -153,6 +201,7 @@ struct Example:
         //ImGui::ShowMetricsWindow();
     }
 
+    std::string        m_SettingsFile;
     ed::EditorContext* m_Context = nullptr;
 };
 
@@ -170,8 +219,6 @@ int Main(int argc, char** argv)
 Result:
 
 ![00-Simple](https://user-images.githubusercontent.com/1197433/89328516-cca01f00-d68d-11ea-9959-2da159851101.png)
-
-`ed::InstallSettingsHandler()` keeps node positions, the selection and the view in `imgui.ini`, next to ImGui's windows. Call it before ImGui reads `.ini` data. Applications that keep this state elsewhere set `Config::SettingsName` to `nullptr`, and use `ed::LoadSettingsFromMemory()` and `ed::SaveSettingsToMemory()` once `ed::WantSaveSettings()` is true.
 
 For more details please visit [examples](../examples) folder.
 

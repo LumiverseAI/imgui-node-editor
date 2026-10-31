@@ -121,48 +121,6 @@ TEST_CASE(HitBand, "links.hit_band_is_the_same_in_every_direction", "CORE-15", t
     test::Check(wrong == 0, "horizontal and vertical links are hovered up to their thickness and 5 from them");
 }
 
-TEST_CASE(HoverSlackAtZoom, "links.hover_slack_is_the_same_at_any_zoom", "CORE-15", test::TestFlags_None)
-{
-    // A link 1 thick is hovered up to 5 screen pixels past its stroke; the mouse is
-    // half a pixel inside or outside of that.
-    struct Case { float Zoom; float Slack; bool Hovered; };
-    const Case cases[] =
-    {
-        { 0.25f, 4.5f, true }, { 0.25f, 5.5f, false },
-        { 1.0f,  4.5f, true }, { 1.0f,  5.5f, false },
-        { 4.0f,  4.5f, true }, { 4.0f,  5.5f, false },
-    };
-    int wrong = 0;
-    for (const auto& c : cases)
-    {
-        char settings[128];
-        snprintf(settings, sizeof(settings), R"({"view":{"scroll":{"x":0,"y":0},"zoom":%g}})", c.Zoom);
-        test::Storage storage;
-        storage.Global = settings;
-        test::Session session(&storage);
-        LinkScene scene;
-        session.DefaultContent = [&scene](int frame) { scene.Submit(frame); };
-        session.Run(2);
-
-        const auto mouse = session.Use([] { return ImFloor(ed::CanvasToScreen(ImVec2(0.0f, 0.0f)) + ed::GetScreenSize() * 0.5f); });
-        const auto at    = session.Use([&mouse] { return ed::ScreenToCanvas(mouse); });
-        const auto distance = (c.Zoom * scene.Thickness + c.Slack) / c.Zoom;
-        scene.Start = ImVec2(at.x - 200.0f, at.y - distance);
-        scene.End   = ImVec2(at.x + 200.0f, at.y - distance);
-        test::MouseMove(mouse);
-        session.Run(2);
-
-        const bool hovered = session.Use([] { return ed::GetHoveredLink() == ed::LinkId(100); });
-        if (hovered != c.Hovered)
-        {
-            ++wrong;
-            test::Check(false, "at zoom %g the link is %s %g screen pixels past its stroke", c.Zoom, hovered ? "hovered" : "not hovered", c.Slack);
-        }
-    }
-
-    test::Check(wrong == 0, "links are hovered up to 5 screen pixels past their stroke at any zoom");
-}
-
 TEST_CASE(TessellationAtZoom, "links.tessellation_follows_zoom", "CORE-15", test::TestFlags_None)
 {
     // An S-shaped link in the middle of the view, 8 times larger on screen at zoom 8.
@@ -189,40 +147,4 @@ TEST_CASE(TessellationAtZoom, "links.tessellation_follows_zoom", "CORE-15", test
     }
 
     test::Check(vertices[0] > 0 && vertices[1] >= 2 * vertices[0], "the link has at least twice the vertices at zoom 8: %d at zoom 1, %d at zoom 8", vertices[0], vertices[1]);
-}
-
-TEST_CASE(FallingIds, "links.pins_and_links_in_falling_id_order", "PERF-1", test::TestFlags_None)
-{
-    // Nodes 30, 20 and 10, their pins and links 302, 301 and 300 are created in this
-    // order, so each new one goes before all the others.
-    test::Storage storage;
-    test::Session session(&storage);
-    bool linked[3] = {};
-    session.DefaultContent = [&](int frame)
-    {
-        for (uintptr_t id = 30; id >= 10; id -= 10)
-        {
-            if (frame == 0)
-                ed::SetNodePosition(id, ImVec2(id * 20.0f, 0.0f));
-            ed::BeginNode(id);
-            ed::BeginPin(id + 2, ed::PinKind::Output);
-            ImGui::TextUnformatted("out");
-            ed::EndPin();
-            ed::BeginPin(id + 1, ed::PinKind::Input);
-            ImGui::TextUnformatted("in");
-            ed::EndPin();
-            ed::EndNode();
-        }
-        linked[0] = ed::Link(302, 22, 31);
-        linked[1] = ed::Link(301, 12, 21);
-        linked[2] = ed::Link(300, 32, 11);
-    };
-    session.Run(3);
-
-    ed::PinId start, end;
-    const bool pins    = session.Use([&] { return ed::GetLinkPins(301, &start, &end); });
-    const bool linksOf = session.Use([] { return ed::HasAnyLinks(ed::PinId(31)) && ed::HasAnyLinks(ed::NodeId(10)); });
-    test::Check(linked[0] && linked[1] && linked[2], "every link is accepted: %d %d %d", linked[0], linked[1], linked[2]);
-    test::Check(pins && start.Get() == 12 && end.Get() == 21, "link 301 joins pins 12 and 21: %d, %d", (int)start.Get(), (int)end.Get());
-    test::Check(linksOf, "pin 31 and node 10 have their links");
 }

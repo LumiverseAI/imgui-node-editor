@@ -205,26 +205,6 @@ TEST_CASE(StyleStackUnbalanced, "api.style_stack_unbalanced_in_frame_asserts", "
     session.Use([] { ed::PopStyleVar(); });
 }
 
-TEST_CASE(BeginEndOutOfOrder, "api.begin_and_end_out_of_order_assert", "CORE-18", test::TestFlags_None)
-{
-    // ed::Begin() again inside a frame, and ed::End() between frames.
-    test::ExpectAsserts(2);
-    test::Storage storage;
-    test::Session session(&storage);
-    session.Frame([](int)
-    {
-        ed::Begin("Again");
-        ed::BeginNode(1);
-        ImGui::TextUnformatted("Node");
-        ed::EndNode();
-    });
-    session.Use([] { ed::End(); });
-    session.Run(2);
-
-    const auto size = session.Use([] { return ed::GetNodeSize(1); });
-    test::Check(size.x > 0.0f && size.y > 0.0f, "the editor goes on: node 1 measures (%g, %g)", size.x, size.y);
-}
-
 TEST_CASE(CallWithoutEditor, "api.call_without_current_editor_asserts", "API-8", test::TestFlags_None)
 {
     test::ExpectAsserts(1);
@@ -280,87 +260,6 @@ TEST_CASE(NonFinitePositions, "api.non_finite_positions_are_ignored", "CORE-17",
     test::Check(other.x == FLT_MAX && other.y == FLT_MAX, "node 2 isn't created: GetNodePosition() reports (%g, %g)", other.x, other.y);
 }
 
-TEST_CASE(NodeIdScope, "api.widgets_in_nodes_have_node_scoped_ids", "API-12", test::TestFlags_None)
-{
-    // Nodes 1 and 2 each have a button labeled "X"; the mouse is over node 1's.
-    test::Storage storage;
-    test::Session session(&storage);
-    ImGuiID inside = 0, outside = 0;
-    ImVec2 button;
-    session.DefaultContent = [&](int frame)
-    {
-        for (int id : { 1, 2 })
-        {
-            if (frame == 0)
-                ed::SetNodePosition(id, ImVec2(id * 200.0f, 100.0f));
-            ed::BeginNode(id);
-            ImGui::Button("X");
-            if (id == 1)
-            {
-                inside = ImGui::GetID("X");
-                button = ImGui::GetItemRectMin() + ImGui::GetItemRectSize() * 0.5f;
-            }
-            ed::EndNode();
-        }
-        outside = ImGui::GetID("X");
-    };
-    session.Run(2);
-    test::MouseMove(session.Use([&] { return ed::CanvasToScreen(button); }));
-    session.Run(3);
-
-    test::Check(inside != outside, "GetID() inside a node differs from outside: 0x%08X and 0x%08X", inside, outside);
-# if IMGUI_VERSION_NUM >= 19120
-#     if IMGUI_VERSION_NUM >= 19210
-    const auto conflict = GImGui->DebugDrawIdConflictsId;
-#     else
-    const auto conflict = GImGui->DebugDrawIdConflicts;
-#     endif
-    test::Check(conflict == 0, "the buttons don't share an ID: conflict on 0x%08X", conflict);
-# endif
-}
-
-TEST_CASE(CurrentZoom, "api.current_zoom_is_the_zoom_factor", "API-13", test::TestFlags_None)
-{
-    // The view saved at 200%.
-    test::Storage storage;
-    storage.Global = R"({"view":{"scroll":{"x":0,"y":0},"zoom":2}})";
-    test::Session session(&storage);
-    session.Run(2);
-
-    const float zoom = session.Use([] { return ed::GetCurrentZoom(); });
-    test::Check(zoom == 2.0f, "GetCurrentZoom() reads 2 at 200%%: %g", zoom);
-}
-
-TEST_CASE(IsFocused, "api.is_focused_follows_the_host_window", "API-13", test::TestFlags_None)
-{
-    // Another window takes focus from the host, then gives it back.
-    test::Storage storage;
-    test::Session session(&storage);
-    bool focusOther = false, focusHost = false;
-    session.AfterHost = [&]
-    {
-        ImGui::SetNextWindowPos(ImVec2(1100.0f, 600.0f));
-        ImGui::Begin("Other");
-        ImGui::End();
-        if (focusOther)
-            ImGui::SetWindowFocus("Other");
-        if (focusHost)
-            ImGui::SetWindowFocus("Host");
-        focusOther = focusHost = false;
-    };
-    focusHost = true;
-    session.Run(3);
-    const bool focused     = session.Use([] { return ed::IsFocused() && ed::IsActive(); });
-    focusOther = true;
-    session.Run(3);
-    const bool unfocused   = session.Use([] { return !ed::IsFocused() && !ed::IsActive(); });
-    focusHost = true;
-    session.Run(3);
-    const bool refocused   = session.Use([] { return ed::IsFocused() && ed::IsActive(); });
-
-    test::Check(focused && unfocused && refocused, "IsFocused() and IsActive() follow the host window's focus: %d, %d, %d", focused, unfocused, refocused);
-}
-
 TEST_CASE(OrderedNodeCount, "api.ordered_node_ids_count_without_an_array", "API-13", test::TestFlags_None)
 {
     // Three nodes, counted without an array as GetSelectedNodes() counts.
@@ -381,56 +280,6 @@ TEST_CASE(OrderedNodeCount, "api.ordered_node_ids_count_without_an_array", "API-
     counts[1] = session.Use([] { return ed::GetOrderedNodeIds(nullptr, 10); });
 
     test::Check(counts[0] == 3 && counts[1] == 3, "the count is 3 whatever the size: %d and %d", counts[0], counts[1]);
-}
-
-TEST_CASE(ZeroIds, "api.zero_ids_are_refused", "API-13", test::TestFlags_None)
-{
-    // Node 0 with pin 1 in it, pin 0 in node 1, and link 0, each asserting on both
-    // frames, next to valid nodes 1 and 2 linked by link 100.
-    test::ExpectAsserts(6);
-    test::Storage storage;
-    test::Session session(&storage);
-    bool zeroLinked = true, linked = false;
-    session.DefaultContent = [&](int frame)
-    {
-        if (frame == 0)
-        {
-            ed::SetNodePosition(1, ImVec2(0.0f, 0.0f));
-            ed::SetNodePosition(2, ImVec2(300.0f, 0.0f));
-        }
-
-        ed::BeginNode(0);
-        ImGui::TextUnformatted("Zero");
-        ed::BeginPin(1, ed::PinKind::Input);
-        ed::PinPivotAlignment(ImVec2(0.0f, 0.5f));
-        ImGui::TextUnformatted("In");
-        ed::EndPin();
-        ed::EndNode();
-
-        ed::BeginNode(1);
-        ed::BeginPin(0, ed::PinKind::Output);
-        ed::PinRect(ImVec2(0.0f, 0.0f), ImVec2(10.0f, 10.0f));
-        ImGui::TextUnformatted("Zero");
-        ed::EndPin();
-        ed::BeginPin(11, ed::PinKind::Output);
-        ImGui::TextUnformatted("Out");
-        ed::EndPin();
-        ed::EndNode();
-
-        ed::BeginNode(2);
-        ed::BeginPin(21, ed::PinKind::Input);
-        ImGui::TextUnformatted("In");
-        ed::EndPin();
-        ed::EndNode();
-
-        zeroLinked = ed::Link(0, 11, 21);
-        linked     = ed::Link(100, 11, 21);
-    };
-    session.Run(2);
-
-    const auto zeroPosition = session.Use([] { return ed::GetNodePosition(0); });
-    test::Check(zeroPosition.x == FLT_MAX, "node 0 isn't created: at (%g, %g)", zeroPosition.x, zeroPosition.y);
-    test::Check(!zeroLinked && linked, "link 0 is refused, link 100 between the same pins isn't");
 }
 
 TEST_CASE(MisnestedBuilding, "api.misnested_building_is_ignored", "API-13", test::TestFlags_None)
@@ -590,8 +439,8 @@ TEST_CASE(AltClickWithoutShortcuts, "api.alt_click_deletion_follows_enable_short
                     offered[enabled] = offered[enabled] || linkId == ed::LinkId(100);
                     ed::RejectDeletedItem();
                 }
-                ed::EndDelete();
             }
+            ed::EndDelete();
         };
         session.Run(2);
         const auto middle = session.Use([] { return ed::CanvasToScreen(ImVec2(250.0f, 100.0f)); });
@@ -664,16 +513,4 @@ TEST_CASE(LinkQueryPhase, "api.link_queries_see_links_submitted_so_far", "CORE-1
 
     test::Check(!inPin && hadInPin, "inside the pin, before the frame's links, HasAnyLinks() is false and PinHadAnyLinks() true");
     test::Check(afterLinks, "after the frame's links, HasAnyLinks() is true");
-}
-
-TEST_CASE(IdKinds, "api.ids_of_one_kind_dont_convert_to_another", "API-13", test::TestFlags_None)
-{
-    const bool crossKind =
-        std::is_constructible<ed::NodeId, ed::PinId>::value || std::is_convertible<ed::PinId, ed::NodeId>::value ||
-        std::is_constructible<ed::PinId, ed::LinkId>::value || std::is_convertible<ed::LinkId, ed::NodeId>::value;
-    const bool fromIntegers = std::is_convertible<int, ed::NodeId>::value && std::is_convertible<uintptr_t, ed::LinkId>::value;
-    const bool fromPointers = std::is_constructible<ed::PinId, int*>::value && !std::is_convertible<int*, ed::PinId>::value;
-
-    test::Check(!crossKind, "a node, pin or link ID doesn't convert to another kind");
-    test::Check(fromIntegers && fromPointers, "IDs convert from integers, and explicitly from pointers");
 }

@@ -23,6 +23,10 @@ struct Application
 
     const std::string& GetName() const;
 
+    // A relative path is relative to the directory of the executable, or to the
+    // Resources of its macOS bundle, not to the working directory.
+    static std::string ResolvePath(const std::string& path);
+
     ImFont* DefaultFont() const;
     ImFont* HeaderFont() const;
 

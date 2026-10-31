@@ -71,8 +71,8 @@ struct SmokeApp
                 ++Created;
                 ed::Link(Links.back().Id, start, end);
             }
-            ed::EndCreate();
         }
+        ed::EndCreate();
 
         if (ed::BeginDelete())
         {
@@ -104,8 +104,8 @@ struct SmokeApp
                     ++DeletedLinks;
                 }
             }
-            ed::EndDelete();
         }
+        ed::EndDelete();
 
         if (ed::BeginShortcut())
         {
@@ -113,8 +113,8 @@ struct SmokeApp
             if (ed::AcceptPaste())      Paste = true;
             if (ed::AcceptCut())        Cut = true;
             if (ed::AcceptCreateNode()) CreateNode = true;
-            ed::EndShortcut();
         }
+        ed::EndShortcut();
 
         ed::Suspend();
         if (ed::ShowBackgroundContextMenu())

@@ -33,7 +33,7 @@
 #     endif
 # endif
 
-namespace CRUDE_JSON_NAMESPACE {
+namespace crude_json {
 
 // Numbers are converted independently of the global C and C++ locales.
 static bool parse_number(const string& text, number& result)
@@ -259,7 +259,7 @@ string value::dump(const int indent, const char indent_char) const
     dump_context_t context(indent, indent_char);
 
     context.out.imbue(std::locale::classic());
-    context.out.precision(std::numeric_limits<double>::max_digits10);
+    context.out.precision(std::numeric_limits<double>::max_digits10 + 1);
     context.out << std::defaultfloat;
 
     dump(context, 0);
@@ -495,7 +495,7 @@ private:
                 return false;
 
             ++m_Depth;
-            const auto accepted = peek() == '{' ? accept_object(result) : accept_array(result);
+            const auto accepted = accept_object(result) || accept_array(result);
             --m_Depth;
             return accepted;
         }
@@ -935,67 +935,19 @@ value value::parse(const string& data)
 }
 
 # if CRUDE_JSON_IO
-# ifdef _WIN32
-// Empty when the text isn't valid UTF-8.
-static std::wstring widen(const string& text)
-{
-    const auto length = static_cast<int>(text.size());
-    const auto size   = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), length, nullptr, 0);
-    std::wstring result(size > 0 ? static_cast<size_t>(size) : 0, L'\0');
-    if (size > 0)
-        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), length, &result[0], size);
-    return result;
-}
-# endif
-
-static FILE* open_file(const string& path, const char* mode)
-{
-    FILE* file = nullptr;
-# if defined(_WIN32)
-    const auto wide_path = widen(path);
-    if (wide_path.empty())
-        return nullptr;
-#     if defined(_MSC_VER)
-    if (_wfopen_s(&file, wide_path.c_str(), widen(mode).c_str()) != 0)
-        return nullptr;
-#     else
-    file = _wfopen(wide_path.c_str(), widen(mode).c_str());
-#     endif
-# elif defined(__STDC_LIB_EXT1__) && __STDC_WANT_LIB_EXT1__
-    if (fopen_s(&file, path.c_str(), mode) != 0)
-        return nullptr;
-# else
-    file = fopen(path.c_str(), mode);
-# endif
-    return file;
-}
-
-// Replaces 'to' when it exists.
-static bool replace_file(const string& from, const string& to)
-{
-# if defined(_WIN32)
-    const auto wide_from = widen(from);
-    const auto wide_to   = widen(to);
-    return !wide_from.empty() && !wide_to.empty()
-        && MoveFileExW(wide_from.c_str(), wide_to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-# else
-    return rename(from.c_str(), to.c_str()) == 0;
-# endif
-}
-
-static void remove_file(const string& path)
-{
-# if defined(_WIN32)
-    DeleteFileW(widen(path).c_str());
-# else
-    remove(path.c_str());
-# endif
-}
-
 std::pair<value, bool> value::load(const string& path)
 {
     // Modern C++, so beautiful...
-    std::unique_ptr<FILE, void(*)(FILE*)> file{open_file(path, "rb"), [](FILE* file) { if (file) fclose(file); }};
+    std::unique_ptr<FILE, void(*)(FILE*)> file{nullptr, [](FILE* file) { if (file) fclose(file); }};
+# if defined(_MSC_VER) || (defined(__STDC_LIB_EXT1__) && __STDC_WANT_LIB_EXT1__)
+    FILE* handle = nullptr;
+    if (fopen_s(&handle, path.c_str(), "rb") != 0)
+        return {value{}, false};
+    file.reset(handle);
+# else
+    file.reset(fopen(path.c_str(), "rb"));
+# endif
+
     if (!file)
         return {value{}, false};
 
@@ -1012,12 +964,28 @@ std::pair<value, bool> value::load(const string& path)
     return {p.parse(), true};
 }
 
+// Replaces 'to' when it exists.
+static bool replace_file(const string& from, const string& to)
+{
+# if defined(_WIN32)
+    return MoveFileExA(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+# else
+    return rename(from.c_str(), to.c_str()) == 0;
+# endif
+}
+
 bool value::save(const string& path, const int indent, const char indent_char) const
 {
     const auto data      = dump(indent, indent_char);
     const auto temp_path = path + ".tmp";
 
-    auto file = open_file(temp_path, "wb");
+    FILE* file = nullptr;
+# if defined(_MSC_VER) || (defined(__STDC_LIB_EXT1__) && __STDC_WANT_LIB_EXT1__)
+    if (fopen_s(&file, temp_path.c_str(), "wb") != 0)
+        return false;
+# else
+    file = fopen(temp_path.c_str(), "wb");
+# endif
     if (!file)
         return false;
 
@@ -1025,7 +993,7 @@ bool value::save(const string& path, const int indent, const char indent_char) c
     const auto closed  = fclose(file) == 0;
     if (!written || !closed || !replace_file(temp_path, path))
     {
-        remove_file(temp_path);
+        remove(temp_path.c_str());
         return false;
     }
 
@@ -1034,4 +1002,4 @@ bool value::save(const string& path, const int indent, const char indent_char) c
 
 # endif
 
-} // namespace CRUDE_JSON_NAMESPACE
+} // namespace crude_json

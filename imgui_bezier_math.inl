@@ -9,26 +9,26 @@
 // CREDITS
 //   Written by Michal Cichon
 //------------------------------------------------------------------------------
-# ifndef IMGUI_BEZIER_MATH_INL
-# define IMGUI_BEZIER_MATH_INL
+# ifndef __IMGUI_BEZIER_MATH_INL__
+# define __IMGUI_BEZIER_MATH_INL__
 # pragma once
 
 
 //------------------------------------------------------------------------------
 # include "imgui_bezier_math.h"
 # include <cmath>
-# include <type_traits>
+# include <map> // used in ImCubicBezierFixedStep
 
 
 //------------------------------------------------------------------------------
 template <typename T>
-static inline T ImLinearBezier(const T& p0, const T& p1, float t)
+inline T ImLinearBezier(const T& p0, const T& p1, float t)
 {
-    return p0 + (p1 - p0) * t;
+    return p0 + t * (p1 - p0);
 }
 
 template <typename T>
-static inline T ImLinearBezierDt(const T& p0, const T& p1, float t)
+inline T ImLinearBezierDt(const T& p0, const T& p1, float t)
 {
     IM_UNUSED(t);
 
@@ -36,54 +36,54 @@ static inline T ImLinearBezierDt(const T& p0, const T& p1, float t)
 }
 
 template <typename T>
-static inline T ImQuadraticBezier(const T& p0, const T& p1, const T& p2, float t)
+inline T ImQuadraticBezier(const T& p0, const T& p1, const T& p2, float t)
 {
     const auto a = 1 - t;
 
-    return p0 * (a * a) + p1 * (2 * t * a) + p2 * (t * t);
+    return a * a * p0 + 2 * t * a * p1 + t * t * p2;
 }
 
 template <typename T>
-static inline T ImQuadraticBezierDt(const T& p0, const T& p1, const T& p2, float t)
+inline T ImQuadraticBezierDt(const T& p0, const T& p1, const T& p2, float t)
 {
-    return (p1 - p0) * (2 * (1 - t)) + (p2 - p1) * (2 * t);
+    return 2 * (1 - t) * (p1 - p0) + 2 * t * (p2 - p1);
 }
 
 template <typename T>
-static inline T ImCubicBezier(const T& p0, const T& p1, const T& p2, const T& p3, float t)
+inline T ImCubicBezier(const T& p0, const T& p1, const T& p2, const T& p3, float t)
 {
     const auto a = 1 - t;
     const auto b = a * a * a;
     const auto c = t * t * t;
 
-    return p0 * b + p1 * (3 * t * a * a) + p2 * (3 * t * t * a) + p3 * c;
+    return b * p0 + 3 * t * a * a * p1 + 3 * t * t * a * p2 + c * p3;
 }
 
 template <typename T>
-static inline T ImCubicBezierDt(const T& p0, const T& p1, const T& p2, const T& p3, float t)
+inline T ImCubicBezierDt(const T& p0, const T& p1, const T& p2, const T& p3, float t)
 {
     const auto a = 1 - t;
     const auto b = a * a;
     const auto c = t * t;
     const auto d = 2 * t * a;
 
-    return (p1 - p0) * (3 * b) + (p2 - p1) * (3 * d) + (p3 - p2) * (3 * c);
+    return 3 * b * (p1 - p0) + 3 * d * (p2 - p1) + 3 * c * (p3 - p2);
 }
 
 template <typename T>
-static inline T ImCubicBezierSample(const T& p0, const T& p1, const T& p2, const T& p3, float t)
+inline T ImCubicBezierSample(const T& p0, const T& p1, const T& p2, const T& p3, float t)
 {
     return ImCubicBezier(p0, p1, p2, p3, t);
 }
 
 template <typename T>
-static inline T ImCubicBezierSample(const ImCubicBezierPointsT<T>& curve, float t)
+inline T ImCubicBezierSample(const ImCubicBezierPointsT<T>& curve, float t)
 {
     return ImCubicBezierSample(curve.P0, curve.P1, curve.P2, curve.P3, t);
 }
 
 template <typename T>
-static inline T ImCubicBezierTangent(const T& p0, const T& p1, const T& p2, const T& p3, float t)
+inline T ImCubicBezierTangent(const T& p0, const T& p1, const T& p2, const T& p3, float t)
 {
     const auto cp0_zero = ImLengthSqr(p1 - p0) < 1e-5f;
     const auto cp1_zero = ImLengthSqr(p3 - p2) < 1e-5f;
@@ -99,13 +99,13 @@ static inline T ImCubicBezierTangent(const T& p0, const T& p1, const T& p2, cons
 }
 
 template <typename T>
-static inline T ImCubicBezierTangent(const ImCubicBezierPointsT<T>& curve, float t)
+inline T ImCubicBezierTangent(const ImCubicBezierPointsT<T>& curve, float t)
 {
     return ImCubicBezierTangent(curve.P0, curve.P1, curve.P2, curve.P3, t);
 }
 
 template <typename T>
-static inline float ImCubicBezierLength(const T& p0, const T& p1, const T& p2, const T& p3)
+inline float ImCubicBezierLength(const T& p0, const T& p1, const T& p2, const T& p3)
 {
     // Legendre-Gauss abscissae with n=24 (x_i values, defined at i=n as the roots of the nth order Legendre polynomial Pn(x))
     static const float t_values[] =
@@ -188,13 +188,13 @@ static inline float ImCubicBezierLength(const T& p0, const T& p1, const T& p2, c
 }
 
 template <typename T>
-static inline float ImCubicBezierLength(const ImCubicBezierPointsT<T>& curve)
+inline float ImCubicBezierLength(const ImCubicBezierPointsT<T>& curve)
 {
     return ImCubicBezierLength(curve.P0, curve.P1, curve.P2, curve.P3);
 }
 
 template <typename T>
-static inline ImCubicBezierSplitResultT<T> ImCubicBezierSplit(const T& p0, const T& p1, const T& p2, const T& p3, float t)
+inline ImCubicBezierSplitResultT<T> ImCubicBezierSplit(const T& p0, const T& p1, const T& p2, const T& p3, float t)
 {
     const auto z1 = t;
     const auto z2 = z1 * z1;
@@ -207,42 +207,44 @@ static inline ImCubicBezierSplitResultT<T> ImCubicBezierSplit(const T& p0, const
     {
         ImCubicBezierPointsT<T>
         {
-                                                                     p0,
-                                                      p1 * z1 - p0 * s1,
-                                 p2 * z2 - p1 * (2 * z1 * s1) + p0 * s2,
-            p3 * z3 - p2 * (3 * z2 * s1) + p1 * (3 * z1 * s2) - p0 * s3
+                                                                 p0,
+                                             z1      * p1 - s1 * p0,
+                          z2      * p2 - 2 * z1 * s1 * p1 + s2 * p0,
+            z3 * p3 - 3 * z2 * s1 * p2 + 3 * z1 * s2 * p1 - s3 * p0
         },
         ImCubicBezierPointsT<T>
         {
-            p3 * z3 - p2 * (3 * z2 * s1) + p1 * (3 * z1 * s2) - p0 * s3,
-                                 p3 * z2 - p2 * (2 * z1 * s1) + p1 * s2,
-                                                      p3 * z1 - p2 * s1,
-                                                                     p3,
+            z3 * p3 - 3 * z2 * s1 * p2 + 3 * z1 * s2 * p1 - s3 * p0,
+                          z2      * p3 - 2 * z1 * s1 * p2 + s2 * p1,
+                                             z1      * p3 - s1 * p2,
+                                                                 p3,
         }
     };
 }
 
 template <typename T>
-static inline ImCubicBezierSplitResultT<T> ImCubicBezierSplit(const ImCubicBezierPointsT<T>& curve, float t)
+inline ImCubicBezierSplitResultT<T> ImCubicBezierSplit(const ImCubicBezierPointsT<T>& curve, float t)
 {
     return ImCubicBezierSplit(curve.P0, curve.P1, curve.P2, curve.P3, t);
 }
 
-static inline ImRect ImCubicBezierBoundingRect(const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3)
+inline ImRect ImCubicBezierBoundingRect(const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3)
 {
     // The extrema are where the derivative, a t^2 + b t + c, is zero.
-    auto a = p3 * 3.0f - p2 * 9.0f + p1 * 9.0f - p0 * 3.0f;
-    auto b = p0 * 6.0f - p1 * 12.0f + p2 * 6.0f;
-    auto c = p1 * 3.0f - p0 * 3.0f;
+    auto a = 3 * p3 - 9 * p2 + 9 * p1 - 3 * p0;
+    auto b = 6 * p0 - 12 * p1 + 6 * p2;
+    auto c = 3 * p1 - 3 * p0;
 
     auto tl = ImMin(p0, p3);
     auto rb = ImMax(p0, p3);
 
+# define IM_VEC2_INDEX(v, i) (*((i) == 0 ? &(v).x : &(v).y))
+
     for (int i = 0; i < 2; ++i)
     {
-        const auto ai = a[i];
-        const auto bi = b[i];
-        const auto ci = c[i];
+        const auto ai = IM_VEC2_INDEX(a, i);
+        const auto bi = IM_VEC2_INDEX(b, i);
+        const auto ci = IM_VEC2_INDEX(c, i);
 
         float roots[2];
         int   count = 0;
@@ -268,23 +270,24 @@ static inline ImRect ImCubicBezierBoundingRect(const ImVec2& p0, const ImVec2& p
             const auto t = roots[k];
             if (t > 0 && t < 1)
             {
-                auto p = ImCubicBezier(p0[i], p1[i], p2[i], p3[i], t);
-                tl[i] = ImMin(tl[i], p);
-                rb[i] = ImMax(rb[i], p);
+                auto p = ImCubicBezier(IM_VEC2_INDEX(p0, i), IM_VEC2_INDEX(p1, i), IM_VEC2_INDEX(p2, i), IM_VEC2_INDEX(p3, i), t);
+                IM_VEC2_INDEX(tl, i) = ImMin(IM_VEC2_INDEX(tl, i), p);
+                IM_VEC2_INDEX(rb, i) = ImMax(IM_VEC2_INDEX(rb, i), p);
             }
         }
     }
 
+# undef IM_VEC2_INDEX
 
     return ImRect(tl, rb);
 }
 
-static inline ImRect ImCubicBezierBoundingRect(const ImCubicBezierPoints& curve)
+inline ImRect ImCubicBezierBoundingRect(const ImCubicBezierPoints& curve)
 {
     return ImCubicBezierBoundingRect(curve.P0, curve.P1, curve.P2, curve.P3);
 }
 
-static inline ImProjectResult ImProjectOnCubicBezier(const ImVec2& point, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, const int subdivisions)
+inline ImProjectResult ImProjectOnCubicBezier(const ImVec2& point, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, const int subdivisions)
 {
     // http://pomax.github.io/bezierinfo/#projections
 
@@ -326,7 +329,7 @@ static inline ImProjectResult ImProjectOnCubicBezier(const ImVec2& point, const 
         {
             const auto s   = ImCubicBezier(p0, p1, p2, p3, best_t) - point;
             const auto dp  = ImCubicBezierDt(p0, p1, p2, p3, best_t);
-            const auto ddp = (p2 - p1 * 2.0f + p0) * (6 * (1 - best_t)) + (p3 - p2 * 2.0f + p1) * (6 * best_t);
+            const auto ddp = 6 * (1 - best_t) * (p2 - 2 * p1 + p0) + 6 * best_t * (p3 - 2 * p2 + p1);
             const auto f   = ImDot(s, dp);
             const auto df  = ImDot(dp, dp) + ImDot(s, ddp);
             if (df <= 0)
@@ -367,12 +370,12 @@ static inline ImProjectResult ImProjectOnCubicBezier(const ImVec2& point, const 
     return result;
 }
 
-static inline ImProjectResult ImProjectOnCubicBezier(const ImVec2& p, const ImCubicBezierPoints& curve, const int subdivisions)
+inline ImProjectResult ImProjectOnCubicBezier(const ImVec2& p, const ImCubicBezierPoints& curve, const int subdivisions)
 {
     return ImProjectOnCubicBezier(p, curve.P0, curve.P1, curve.P2, curve.P3, subdivisions);
 }
 
-static inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, const ImVec2& a0, const ImVec2& a1)
+inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, const ImVec2& a0, const ImVec2& a1)
 {
     // Real roots of a t^3 + b t^2 + c t + d, in double. Leading coefficients that
     // vanish next to the others leave a quadratic or a linear equation.
@@ -395,9 +398,8 @@ static inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImVe
 
             if (D >= 0) // complex or duplicate roots
             {
-                const double sqrt_D = std::sqrt(D);
-                const double S      = std::cbrt(R + sqrt_D);
-                const double T      = std::cbrt(R - sqrt_D);
+                const double S = std::cbrt(R + std::sqrt(D));
+                const double T = std::cbrt(R - std::sqrt(D));
 
                 roots[0] = -A / 3 + (S + T);       // real root
                 roots[1] = -A / 3 - (S + T) / 2;   // real part of complex root
@@ -408,13 +410,12 @@ static inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImVe
             }
             else // distinct real roots
             {
-                const double th     = std::acos(R / std::sqrt(-Q * Q * Q));
-                const double pi     = 3.14159265358979323846;
-                const double radius = 2 * std::sqrt(-Q);
+                const double th = std::acos(R / std::sqrt(-Q * Q * Q));
+                const double pi = 3.14159265358979323846;
 
-                roots[0] = radius * std::cos(th / 3) - A / 3;
-                roots[1] = radius * std::cos((th + 2 * pi) / 3) - A / 3;
-                roots[2] = radius * std::cos((th + 4 * pi) / 3) - A / 3;
+                roots[0] = 2 * std::sqrt(-Q) * std::cos(th / 3) - A / 3;
+                roots[1] = 2 * std::sqrt(-Q) * std::cos((th + 2 * pi) / 3) - A / 3;
+                roots[2] = 2 * std::sqrt(-Q) * std::cos((th + 4 * pi) / 3) - A / 3;
                 return 3;
             }
         }
@@ -453,10 +454,10 @@ static inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImVe
     //             c3                  c2                c1       c0
 
     // Calculate the coefficients
-    auto c3 = -p0         + p1 * 3.0f - p2 * 3.0f + p3;
-    auto c2 =  p0 * 3.0f  - p1 * 6.0f + p2 * 3.0f;
-    auto c1 =  p0 * -3.0f + p1 * 3.0f;
-    auto c0 =  p0;
+    auto c3 =     -p0 + 3 * p1 - 3 * p2 + p3;
+    auto c2 =  3 * p0 - 6 * p1 + 3 * p2;
+    auto c1 = -3 * p0 + 3 * p1;
+    auto c0 =      p0;
 
     // Convert line to normal form: ax + by + c = 0
     const double a = a1.y - a0.y;
@@ -498,17 +499,17 @@ static inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImVe
     return result;
 }
 
-static inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImCubicBezierPoints& curve, const ImLine& line)
+inline ImCubicBezierIntersectResult ImCubicBezierLineIntersect(const ImCubicBezierPoints& curve, const ImLine& line)
 {
     return ImCubicBezierLineIntersect(curve.P0, curve.P1, curve.P2, curve.P3, line.A, line.B);
 }
 
-static inline void ImCubicBezierSubdivide(ImCubicBezierSubdivideCallback callback, void* user_pointer, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float tess_tol, ImCubicBezierSubdivideFlags flags)
+inline void ImCubicBezierSubdivide(ImCubicBezierSubdivideCallback callback, void* user_pointer, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float tess_tol, ImCubicBezierSubdivideFlags flags)
 {
     return ImCubicBezierSubdivide(callback, user_pointer, ImCubicBezierPoints{ p0, p1, p2, p3 }, tess_tol, flags);
 }
 
-static inline void ImCubicBezierSubdivide(ImCubicBezierSubdivideCallback callback, void* user_pointer, const ImCubicBezierPoints& curve, float tess_tol, ImCubicBezierSubdivideFlags flags)
+inline void ImCubicBezierSubdivide(ImCubicBezierSubdivideCallback callback, void* user_pointer, const ImCubicBezierPoints& curve, float tess_tol, ImCubicBezierSubdivideFlags flags)
 {
     struct Tesselator
     {
@@ -567,29 +568,29 @@ static inline void ImCubicBezierSubdivide(ImCubicBezierSubdivideCallback callbac
     tesselator.Subdivide(curve, 0);
 }
 
-template <typename F> static inline void ImCubicBezierSubdivide(F&& callback, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float tess_tol, ImCubicBezierSubdivideFlags flags)
+template <typename F> inline void ImCubicBezierSubdivide(F& callback, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float tess_tol, ImCubicBezierSubdivideFlags flags)
 {
     auto handler = [](const ImCubicBezierSubdivideSample& p, void* user_pointer)
     {
-        auto& callback = *static_cast<typename std::remove_reference<F>::type*>(user_pointer);
+        auto& callback = *reinterpret_cast<F*>(user_pointer);
         callback(p);
     };
 
-    ImCubicBezierSubdivide(handler, const_cast<void*>(static_cast<const void*>(&callback)), ImCubicBezierPoints{ p0, p1, p2, p3 }, tess_tol, flags);
+    ImCubicBezierSubdivide(handler, &callback, ImCubicBezierPoints{ p0, p1, p2, p3 }, tess_tol, flags);
 }
 
-template <typename F> static inline void ImCubicBezierSubdivide(F&& callback, const ImCubicBezierPoints& curve, float tess_tol, ImCubicBezierSubdivideFlags flags)
+template <typename F> inline void ImCubicBezierSubdivide(F& callback, const ImCubicBezierPoints& curve, float tess_tol, ImCubicBezierSubdivideFlags flags)
 {
     auto handler = [](const ImCubicBezierSubdivideSample& p, void* user_pointer)
     {
-        auto& callback = *static_cast<typename std::remove_reference<F>::type*>(user_pointer);
+        auto& callback = *reinterpret_cast<F*>(user_pointer);
         callback(p);
     };
 
-    ImCubicBezierSubdivide(handler, const_cast<void*>(static_cast<const void*>(&callback)), curve, tess_tol, flags);
+    ImCubicBezierSubdivide(handler, &callback, curve, tess_tol, flags);
 }
 
-static inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callback, void* user_pointer, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float step, bool overshoot, float max_value_error, float max_t_error)
+inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callback, void* user_pointer, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float step, bool overshoot, float max_value_error, float max_t_error)
 {
     if (!(step > 0.0f) || !callback || !(max_value_error > 0) || !(max_t_error > 0))
         return;
@@ -611,36 +612,31 @@ static inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callbac
     const auto point_count  = static_cast<int>(ImMin(total_length / step, 16777216.0f)) + (overshoot ? 2 : 1);
     const auto t_min        = 0.0f;
     const auto t_max        = step * point_count / total_length;
+    const auto t_0          = (t_min + t_max) * 0.5f;
 
-    auto front_length = [&](float t)
-    {
-        return ImCubicBezierLength(ImCubicBezierSplit(p0, p1, p2, p3, t).Left);
-    };
-
-    // Each sample lies past the previous one: the search starts one step further at the
-    // curve's speed there, in a range widened until it holds the sample.
-    float t_previous = t_min;
+    // #todo: replace map with ImVector + binary search
+    std::map<float, float> cache;
     for (int point_index = 1; point_index < point_count; ++point_index)
     {
         const auto targetLength = point_index * step;
-        const auto speed        = ImSqrt(ImLengthSqr(ImCubicBezierTangent(p0, p1, p2, p3, t_previous)));
 
-        float width   = speed > 0.0f ? 2.0f * step / speed : t_max - t_previous;
-        float t_start = t_previous;
-        float t_end   = ImMin(t_max, t_previous + width);
-        while (t_end < t_max && front_length(t_end) < targetLength)
-        {
-            t_start = t_end;
-            width  *= 2.0f;
-            t_end   = ImMin(t_max, t_end + width);
-        }
-
-        float t       = speed > 0.0f ? ImClamp(t_previous + step / speed, t_start, t_end) : (t_start + t_end) * 0.5f;
+        float t_start = t_min;
+        float t_end   = t_max;
+        float t       = t_0;
         float length  = 0.0f;
 
         for (int iteration = 1; ; ++iteration)
         {
-            length = front_length(t);
+            auto cacheIt = cache.find(t);
+            if (cacheIt == cache.end())
+            {
+                const auto front        = ImCubicBezierSplit(p0, p1, p2, p3, t).Left;
+                const auto split_length = ImCubicBezierLength(front);
+
+                cacheIt = cache.emplace(t, split_length).first;
+            }
+
+            length = cacheIt->second;
             const auto error = targetLength - length;
 
             if (ImFabs(error) <= max_value_error || ImFabs(t_start - t_end) <= max_t_error || iteration == 50)
@@ -657,8 +653,6 @@ static inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callbac
             t = t_next;
         }
 
-        t_previous = t;
-
         sample.T      = t;
         sample.Length = length;
         sample.Point  = ImCubicBezier(p0, p1, p2, p3, t);
@@ -669,36 +663,36 @@ static inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callbac
     }
 }
 
-static inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callback, void* user_pointer, const ImCubicBezierPoints& curve, float step, bool overshoot, float max_value_error, float max_t_error)
+inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callback, void* user_pointer, const ImCubicBezierPoints& curve, float step, bool overshoot, float max_value_error, float max_t_error)
 {
     ImCubicBezierFixedStep(callback, user_pointer, curve.P0, curve.P1, curve.P2, curve.P3, step, overshoot, max_value_error, max_t_error);
 }
 
 // F has signature void(const ImCubicBezierFixedStepSample& p)
 template <typename F>
-static inline void ImCubicBezierFixedStep(F&& callback, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float step, bool overshoot, float max_value_error, float max_t_error)
+inline void ImCubicBezierFixedStep(F& callback, const ImVec2& p0, const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, float step, bool overshoot, float max_value_error, float max_t_error)
 {
     auto handler = [](ImCubicBezierFixedStepSample& sample, void* user_pointer)
     {
-        auto& callback = *static_cast<typename std::remove_reference<F>::type*>(user_pointer);
+        auto& callback = *reinterpret_cast<F*>(user_pointer);
         callback(sample);
     };
 
-    ImCubicBezierFixedStep(handler, const_cast<void*>(static_cast<const void*>(&callback)), p0, p1, p2, p3, step, overshoot, max_value_error, max_t_error);
+    ImCubicBezierFixedStep(handler, &callback, p0, p1, p2, p3, step, overshoot, max_value_error, max_t_error);
 }
 
 template <typename F>
-static inline void ImCubicBezierFixedStep(F&& callback, const ImCubicBezierPoints& curve, float step, bool overshoot, float max_value_error, float max_t_error)
+inline void ImCubicBezierFixedStep(F& callback, const ImCubicBezierPoints& curve, float step, bool overshoot, float max_value_error, float max_t_error)
 {
     auto handler = [](ImCubicBezierFixedStepSample& sample, void* user_pointer)
     {
-        auto& callback = *static_cast<typename std::remove_reference<F>::type*>(user_pointer);
+        auto& callback = *reinterpret_cast<F*>(user_pointer);
         callback(sample);
     };
 
-    ImCubicBezierFixedStep(handler, const_cast<void*>(static_cast<const void*>(&callback)), curve.P0, curve.P1, curve.P2, curve.P3, step, overshoot, max_value_error, max_t_error);
+    ImCubicBezierFixedStep(handler, &callback, curve.P0, curve.P1, curve.P2, curve.P3, step, overshoot, max_value_error, max_t_error);
 }
 
 
 //------------------------------------------------------------------------------
-# endif // IMGUI_BEZIER_MATH_INL
+# endif // __IMGUI_BEZIER_MATH_INL__

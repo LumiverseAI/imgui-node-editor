@@ -79,7 +79,7 @@ void CheckGroupSurvivesHiding(test::Session& session, test::Storage& storage, co
         ed::Group(ImVec2(400.0f, 250.0f));
         ed::EndNode();
         size = ed::GetNodeSize(1);
-        zoom = ed::GetCurrentZoom();
+        zoom = test::CurrentZoom();
     };
 
     for (int i = 0; i < 5; ++i)

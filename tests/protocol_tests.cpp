@@ -66,8 +66,8 @@ TEST_CASE(RejectedLinkOfferedOnce, "protocols.rejected_new_link_offered_once", "
                 else
                     ed::AcceptNewItem();
             }
-            ed::EndCreate();
         }
+        ed::EndCreate();
     };
 
     session.Run(3);
@@ -103,8 +103,8 @@ TEST_CASE(CancelledDragCreatesNothing, "protocols.cancelled_drag_creates_nothing
             ed::PinId start, end;
             if (ed::QueryNewLink(&start, &end) && start && end)
                 ed::AcceptNewItem();
-            ed::EndCreate();
         }
+        ed::EndCreate();
     };
 
     session.Run(3);
@@ -121,42 +121,6 @@ TEST_CASE(CancelledDragCreatesNothing, "protocols.cancelled_drag_creates_nothing
     session.Run(10);
 
     test::Check(beginCreates == 0, "BeginCreate() is false after the drag was cancelled: true on %d of 10 frames", beginCreates);
-}
-
-TEST_CASE(EndCreateAfterFailedBegin, "protocols.end_create_after_failed_begin_asserts", "API-11", test::TestFlags_None)
-{
-    test::ExpectAsserts(1);
-    test::Storage storage;
-    test::Session session(&storage);
-    session.Frame([](int)
-    {
-        if (!ed::BeginCreate())
-            ed::EndCreate();
-    });
-}
-
-TEST_CASE(EndDeleteAfterFailedBegin, "protocols.end_delete_after_failed_begin_asserts", "DEV-2", test::TestFlags_None)
-{
-    test::ExpectAsserts(1);
-    test::Storage storage;
-    test::Session session(&storage);
-    session.Frame([](int)
-    {
-        if (!ed::BeginDelete())
-            ed::EndDelete();
-    });
-}
-
-TEST_CASE(EndShortcutAfterFailedBegin, "protocols.end_shortcut_after_failed_begin_asserts", "DEV-2", test::TestFlags_None)
-{
-    test::ExpectAsserts(1);
-    test::Storage storage;
-    test::Session session(&storage);
-    session.Frame([](int)
-    {
-        if (!ed::BeginShortcut())
-            ed::EndShortcut();
-    });
 }
 
 TEST_CASE(NoSelfLink, "protocols.dropping_on_the_source_pin_offers_nothing", "API-11", test::TestFlags_None)
@@ -176,8 +140,8 @@ TEST_CASE(NoSelfLink, "protocols.dropping_on_the_source_pin_offers_nothing", "AP
                 ++selfLinks;
                 ed::AcceptNewItem();
             }
-            ed::EndCreate();
         }
+        ed::EndCreate();
     };
     session.Run(3);
 
@@ -221,8 +185,8 @@ TEST_CASE(RepeatedQueries, "protocols.second_query_leaves_the_cursor", "API-11",
                     queriedTwice = true;
                 }
             }
-            ed::EndCreate();
         }
+        ed::EndCreate();
     };
     session.Run(3);
     DragLinkOverTarget(session, pins);
@@ -250,8 +214,8 @@ TEST_CASE(PreviewThickness, "protocols.new_link_preview_has_the_requested_thickn
             ed::PinId start, end;
             if (ed::QueryNewLink(&start, &end))
                 ed::AcceptNewItem(ImColor(previewColor), 3.0f);
-            ed::EndCreate();
         }
+        ed::EndCreate();
     };
     session.Run(3);
     DragLinkOverTarget(session, pins);
@@ -274,4 +238,52 @@ TEST_CASE(PreviewThickness, "protocols.new_link_preview_has_the_requested_thickn
     for (size_t i = 0; same && i < link.size(); ++i)
         same = ImFabs(link[i].x - preview[i].x) < 0.01f && ImFabs(link[i].y - preview[i].y) < 0.01f;
     test::Check(same, "the preview is drawn like a link of the requested thickness: %d and %d vertices", (int)preview.size(), (int)link.size());
+}
+
+//------------------------------------------------------------------------------
+// EndCreate() may follow every BeginCreate(), or only the ones that returned
+// true (the convention of develop's 01fa1b9).
+//------------------------------------------------------------------------------
+namespace {
+
+void CheckEndCreateConvention(bool endOnlyAfterTrueBegin)
+{
+    test::Storage storage;
+    test::Session session(&storage);
+    std::map<int, ImVec2> pins;
+    int created = 0;
+    session.DefaultContent = [&](int frame)
+    {
+        TwoNodes(frame, pins);
+        const bool begun = ed::BeginCreate();
+        if (begun)
+        {
+            ed::PinId start, end;
+            if (ed::QueryNewLink(&start, &end) && start && end && ed::AcceptNewItem())
+                ++created;
+        }
+        if (begun || !endOnlyAfterTrueBegin)
+            ed::EndCreate();
+    };
+
+    const int assertsBefore = test::AssertCount();
+    session.Run(3);
+    DragLinkOverTarget(session, pins);
+    test::MouseButton(0, false);
+    session.Run(5);
+
+    test::Check(created == 1, "the dragged link is created once: %d", created);
+    test::Check(test::AssertCount() == assertsBefore, "no IM_ASSERT failures: %d", test::AssertCount() - assertsBefore);
+}
+
+} // namespace
+
+TEST_CASE(EndCreateAfterEveryBegin, "protocols.end_create_after_every_begin_create", "01fa1b9", test::TestFlags_None)
+{
+    CheckEndCreateConvention(false);
+}
+
+TEST_CASE(EndCreateOnlyAfterTrueBegin, "protocols.end_create_only_after_true_begin_create", "01fa1b9", test::TestFlags_None)
+{
+    CheckEndCreateConvention(true);
 }

@@ -7,6 +7,7 @@
 # include <cmath>
 # include <cstdarg>
 # include <cstdio>
+# include <cstring>
 
 namespace test {
 
@@ -344,12 +345,33 @@ long FirstIndexOf(const Geometry& geometry, ImU32 color)
 
 
 //------------------------------------------------------------------------------
+float CurrentZoom()
+{
+    return 1.0f / ed::GetCurrentZoom();
+}
+
+
+//------------------------------------------------------------------------------
 ed::Config MakeConfig(Storage* storage)
 {
     ed::Config config;
-    config.SmoothZoomPower = 1.3f; // the default on all but Apple platforms, where it is 1.1
-    config.SettingsName = nullptr;
+    config.SettingsFile = nullptr;
     config.UserPointer  = storage;
+    config.SaveSettings = [](const char* data, size_t size, ed::SaveReasonFlags reason, void* userPointer) -> bool
+    {
+        IM_UNUSED(reason);
+        auto storage = static_cast<Storage*>(userPointer);
+        storage->Global.assign(data, size);
+        ++storage->GlobalSaves;
+        return true;
+    };
+    config.LoadSettings = [](char* data, void* userPointer) -> size_t
+    {
+        auto storage = static_cast<Storage*>(userPointer);
+        if (data)
+            memcpy(data, storage->Global.data(), storage->Global.size());
+        return storage->Global.size();
+    };
     return config;
 }
 
@@ -404,18 +426,10 @@ void Session::Frame(const Content& content)
         BeforeEditor();
 
     ed::SetCurrentEditor(Editor);
-    if (Settings && FrameIndex == 0 && !Settings->Global.empty())
-        ed::LoadSettingsFromMemory(Settings->Global.c_str(), Settings->Global.size());
     ed::Begin("Editor", EditorSize);
     if (content)
         content(FrameIndex);
     ed::End();
-    if (Settings && ed::GetSettingsChangeReason() != ed::SaveReasonFlags::None)
-    {
-        Settings->Global = ed::SaveSettingsToMemory();
-        ++Settings->GlobalSaves;
-        ed::ClearWantSaveSettings();
-    }
     ed::SetCurrentEditor(nullptr);
 
     if (AfterEditor)

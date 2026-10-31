@@ -7,8 +7,8 @@
 // CREDITS
 //   Written by Michal Cichon
 //------------------------------------------------------------------------------
-# ifndef IMGUI_NODE_EDITOR_INTERNAL_INL
-# define IMGUI_NODE_EDITOR_INTERNAL_INL
+# ifndef __IMGUI_NODE_EDITOR_INTERNAL_INL__
+# define __IMGUI_NODE_EDITOR_INTERNAL_INL__
 # pragma once
 
 
@@ -60,4 +60,4 @@ inline ImVec2 ImGui_GetMouseClickPos(ImGuiMouseButton buttonIndex)
 
 
 //------------------------------------------------------------------------------
-# endif // IMGUI_NODE_EDITOR_INTERNAL_INL
+# endif // __IMGUI_NODE_EDITOR_INTERNAL_INL__
