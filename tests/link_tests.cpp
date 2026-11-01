@@ -148,3 +148,43 @@ TEST_CASE(TessellationAtZoom, "links.tessellation_follows_zoom", "CORE-15", test
 
     test::Check(vertices[0] > 0 && vertices[1] >= 2 * vertices[0], "the link has at least twice the vertices at zoom 8: %d at zoom 1, %d at zoom 8", vertices[0], vertices[1]);
 }
+
+TEST_CASE(CachedLinkGeometry, "links.bounds_include_curvature_and_drawn_vertices", "UIKIT-198", test::TestFlags_None)
+{
+    auto config = test::MakeConfig(nullptr);
+    config.EnableSettingsPersistence = false;
+    test::Session session(config);
+    LinkScene scene;
+    scene.Start = ImVec2(200, 200);
+    scene.End = ImVec2(500, 200);
+    scene.StartDirection = ImVec2(0, 1);
+    scene.EndDirection = ImVec2(0, 1);
+    scene.Thickness = 8;
+    session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+    session.Run(3);
+    const auto bounds = session.Use([] { return ed::GetLinkBounds(100); });
+    test::Check(bounds.w > 250, "bounds include the curve bulging away from its horizontal endpoints: bottom %g", bounds.w);
+    int vertices = 0;
+    const auto geometry = test::Capture(session.DrawList);
+    session.Use([&]
+    {
+        for (size_t i = 0; i < geometry.Positions.size(); ++i)
+        {
+            if (geometry.Colors[i] != c_LinkColor)
+                continue;
+            ++vertices;
+            const auto point = ed::ScreenToCanvas(geometry.Positions[i]);
+            test::Check(point.x >= bounds.x && point.x <= bounds.z && point.y >= bounds.y && point.y <= bounds.w,
+                "drawn vertex (%g, %g) lies inside the cached bounds", point.x, point.y);
+        }
+    });
+    test::Check(vertices > 0, "the geometry control observed rendered link vertices");
+    session.Frame([](int) {});
+    const auto omitted = session.Use([] { return ed::GetLinkBounds(100); });
+    const auto unknown = session.Use([] { return ed::GetLinkBounds(999); });
+    test::Check(omitted.x == 0 && omitted.y == 0 && omitted.z == 0 && omitted.w == 0,
+        "a non-submitted link reports unavailable geometry");
+    test::Check(unknown.x == 0 && unknown.y == 0 && unknown.z == 0 && unknown.w == 0,
+        "an unknown link reports unavailable geometry");
+    test::Check(bounds.z > bounds.x && bounds.w > bounds.y, "a previously returned value stays independent");
+}

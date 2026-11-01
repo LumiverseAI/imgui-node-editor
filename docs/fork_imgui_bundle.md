@@ -261,6 +261,9 @@ Omitting nodes during partial submission does not erase that state. `RestoreNode
 does nothing in this mode; reapply authored geometry with `SetNodePosition()` and
 `SetGroupSize()`. `GetGroupSize()` returns the resizable rectangle in canvas coordinates,
 excluding the title and padding, and returns zero for unknown or ordinary nodes.
+`GetLinkBounds()` exposes the submitted curve's actual canvas bounds, including
+curvature, arrows and selection borders. Cache them for off-screen links; an
+unknown or non-submitted link returns zero, rather than fabricated geometry.
 
 The headless settings tests count settings lookups and both global/per-node serialization.
 They exercise retained geometry, groups, selection and partial submission with persistence

@@ -765,6 +765,15 @@ bool ax::NodeEditor::GetLinkPins(LinkId linkId, PinId* startPinId, PinId* endPin
     return true;
 }
 
+ImVec4 ax::NodeEditor::GetLinkBounds(LinkId linkId)
+{
+    auto link = CurrentEditor()->FindLink(linkId);
+    if (!link || !link->m_IsLive || !link->m_StartPin || !link->m_EndPin)
+        return ImVec4(0, 0, 0, 0);
+    const auto bounds = link->GetBounds();
+    return ImVec4(bounds.Min.x, bounds.Min.y, bounds.Max.x, bounds.Max.y);
+}
+
 bool ax::NodeEditor::PinHadAnyLinks(PinId pinId)
 {
     return CurrentEditor()->PinHadAnyLinks(pinId);

@@ -783,6 +783,11 @@ IMGUI_NODE_EDITOR_API ImGuiMouseButton GetBackgroundDoubleClickButtonIndex(); //
 
 IMGUI_NODE_EDITOR_API bool GetLinkPins(LinkId linkId, PinId* startPinId, PinId* endPinId); // pass nullptr if particular pin do not interest you; false for an unknown link and a link whose pins were deleted
 
+// Canvas bounds (min x, min y, max x, max y) of the submitted curve, including
+// arrows and selection borders. Zero for unknown or non-submitted links. Hosts
+// doing partial submission can cache this geometry after drawing a link.
+IMGUI_NODE_EDITOR_API ImVec4 GetLinkBounds(LinkId linkId);
+
 // True if the pin was ever connected to a link in its lifetime, even if it
 // is currently disconnected.
 IMGUI_NODE_EDITOR_API bool PinHadAnyLinks(PinId pinId);
