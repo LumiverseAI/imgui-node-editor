@@ -264,3 +264,40 @@ TEST_CASE(OutlinedLink, "links.outline_preserves_literal_color_selection_and_bou
             "missing endpoint rejects");
     });
 }
+
+TEST_CASE(OutlinedLinkLowZoom, "links.outline_and_selection_remain_outside_core_at_low_zoom", "", test::TestFlags_None)
+{
+    test::Storage storage;
+    storage.Global = R"({"view":{"scroll":{"x":0,"y":0},"zoom":0.1}})";
+    test::Session session(&storage);
+    LinkScene scene;
+    scene.Start = ImVec2(200, 300);
+    scene.End = ImVec2(1200, 300);
+    scene.Outlined = true;
+    scene.OutlineThickness = 1;
+    session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+    session.Run(3);
+    session.Use([]
+    {
+        ed::SelectLink(100);
+        ed::GetStyle().Colors[ed::StyleColor_SelLinkBorder] = ImVec4(1, 0, 1, 1);
+    });
+    session.Run(2);
+    const auto geometry = test::Capture(session.DrawList);
+    const auto width = [&](ImU32 color)
+    {
+        float low = FLT_MAX, high = -FLT_MAX;
+        for (size_t i = 0; i < geometry.Colors.size(); ++i)
+            if (geometry.Colors[i] == color)
+            {
+                low = ImMin(low, geometry.Positions[i].y);
+                high = ImMax(high, geometry.Positions[i].y);
+            }
+        return high - low;
+    };
+    const auto core = width(c_LinkColor);
+    const auto outline = width(ImColor(scene.OutlineColor));
+    const auto selected = width(IM_COL32(255, 0, 255, 255));
+    test::Check(core > 0 && outline > core && selected > outline,
+        "nested visible strokes at zoom 0.1: core %g, outline %g, selection %g", core, outline, selected);
+}
