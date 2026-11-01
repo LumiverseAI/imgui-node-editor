@@ -9,6 +9,7 @@
 //------------------------------------------------------------------------------
 # include "imgui_node_editor_internal.h"
 # include <algorithm>
+# include <cmath>
 
 
 //------------------------------------------------------------------------------
@@ -260,6 +261,24 @@ bool ax::NodeEditor::Link(LinkId id, PinId startPinId, PinId endPinId, const ImV
     return CurrentEditor()->DoLink(id, startPinId, endPinId, ImColor(ResolveAutoLinkColor(color)), thickness);
 }
 
+bool ax::NodeEditor::LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
+    const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness)
+{
+    return LinkWithOutline(id, startPinId, endPinId, color, outlineColor, thickness, outlineThickness,
+        ImVec4(0, 0, 0, 0), 0.0f);
+}
+
+bool ax::NodeEditor::LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
+    const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness,
+    const ImVec4& outerColor, float outerThickness)
+{
+    if (!std::isfinite(thickness) || !std::isfinite(outlineThickness) || !std::isfinite(outerThickness) ||
+        thickness < 0.0f || outlineThickness < 0.0f || outerThickness < 0.0f)
+        return false;
+    return CurrentEditor()->DoLink(id, startPinId, endPinId, ImColor(color), thickness,
+        ImColor(outlineColor), outlineThickness, ImColor(outerColor), outerThickness);
+}
+
 void ax::NodeEditor::Flow(LinkId linkId, FlowDirection direction)
 {
     if (auto link = CurrentEditor()->FindLink(linkId))
@@ -437,6 +456,11 @@ void ax::NodeEditor::CenterNodeOnScreen(NodeId nodeId)
         node->CenterOnScreenInNextFrame();
 }
 
+ImVec2 ax::NodeEditor::GetGroupSize(NodeId nodeId)
+{
+    return CurrentEditor()->GetGroupSize(nodeId);
+}
+
 void ax::NodeEditor::SetNodeZPosition(NodeId nodeId, float z)
 {
     CurrentEditor()->SetNodeZPosition(nodeId, z);
@@ -600,6 +624,15 @@ void ax::NodeEditor::NavigateToContent(float duration)
     CurrentEditor()->NavigateTo(CurrentEditor()->GetContentBounds(), true, duration);
 }
 
+void ax::NodeEditor::NavigateToPoint(const ImVec2& point, float duration)
+{
+    if (!std::isfinite(point.x) || !std::isfinite(point.y))
+        return;
+    auto bounds = CurrentEditor()->GetViewRect();
+    bounds.Translate(point - bounds.GetCenter());
+    CurrentEditor()->NavigateTo(bounds, false, duration);
+}
+
 void ax::NodeEditor::NavigateToSelection(bool zoomIn, float duration)
 {
     CurrentEditor()->NavigateTo(CurrentEditor()->GetSelectionBounds(), zoomIn, duration);
@@ -758,6 +791,15 @@ bool ax::NodeEditor::GetLinkPins(LinkId linkId, PinId* startPinId, PinId* endPin
         *endPinId = link->m_EndPin->m_ID;
 
     return true;
+}
+
+ImVec4 ax::NodeEditor::GetLinkBounds(LinkId linkId)
+{
+    auto link = CurrentEditor()->FindLink(linkId);
+    if (!link || !link->m_IsLive || !link->m_StartPin || !link->m_EndPin)
+        return ImVec4(0, 0, 0, 0);
+    const auto bounds = link->GetBounds();
+    return ImVec4(bounds.Min.x, bounds.Min.y, bounds.Max.x, bounds.Max.y);
 }
 
 bool ax::NodeEditor::PinHadAnyLinks(PinId pinId)

@@ -132,6 +132,12 @@ struct Config
     //   otherwise the node grows at each frame (this is detected, and reported with an IM_ASSERT).
     bool                    ForceWindowContentWidthToNodeWidth;
 
+    // False for document-owned editors. No settings are loaded, indexed or serialized;
+    // no settings callback or file I/O runs. Live geometry, selection and navigation
+    // still work, including partially submitted graphs. RestoreNodeState becomes a no-op.
+    // Set this before CreateEditor(); the default preserves legacy persistence.
+    bool                    EnableSettingsPersistence;
+
     Config()
         : SettingsFile("NodeEditor.json")
         , BeginSaveSession(nullptr)
@@ -154,6 +160,7 @@ struct Config
         , SmoothZoomPower(1.3f)
 # endif
         , ForceWindowContentWidthToNodeWidth(false)
+        , EnableSettingsPersistence(true)
     {
     }
 };
@@ -514,6 +521,24 @@ IMGUI_NODE_EDITOR_API ImDrawList* GetNodeBackgroundDrawList(NodeId nodeId);
 // override.
 IMGUI_NODE_EDITOR_API bool Link(LinkId id, PinId startPinId, PinId endPinId, const ImVec4& color = ImVec4(0, 0, 0, 0), float thickness = 1.0f);
 
+// Declares one link with literal RGBA colors, including alpha == 0.
+// Unlike Link(), no color is interpreted as an automatic-color sentinel.
+// The outline is painted behind the core on the same path and keeps the same
+// selectable identity. outlineThickness is the additional width on each side,
+// in canvas units, with a one-screen-pixel minimum when enabled. An optional
+// outer stroke supports contrast across differently colored group backgrounds.
+// Selection/hover borders remain outside all strokes. Zero alpha or width disables
+// the corresponding outline. Non-finite or negative widths reject
+// the submission without changing the link. Submit only once per frame per ID.
+IMGUI_NODE_EDITOR_API bool LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
+    const ImVec4& color, const ImVec4& outlineColor, float thickness = 1.0f, float outlineThickness = 1.0f);
+
+// The same link with a second outer contrast stroke. Both outlines retain one
+// selectable identity; a transparent color or zero width disables that stroke.
+IMGUI_NODE_EDITOR_API bool LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
+    const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness,
+    const ImVec4& outerColor, float outerThickness);
+
 // Trigger a one-shot animated "flow" pulse along a link. Calling this once
 // is enough; the editor handles the time-bounded animation internally.
 IMGUI_NODE_EDITOR_API void Flow(LinkId linkId, FlowDirection direction = FlowDirection::Forward);
@@ -599,12 +624,16 @@ IMGUI_NODE_EDITOR_API void SetNodePosition(NodeId nodeId, const ImVec2& editorPo
 IMGUI_NODE_EDITOR_API void SetGroupSize(NodeId nodeId, const ImVec2& size); // Sets the size of a group node
 IMGUI_NODE_EDITOR_API ImVec2 GetNodePosition(NodeId nodeId); // In canvas coords; (FLT_MAX, FLT_MAX) if unknown
 IMGUI_NODE_EDITOR_API ImVec2 GetNodeSize(NodeId nodeId); // In canvas coords; (0, 0) before the node was drawn
+// The resizable rectangle, excluding the title strip and padding. In canvas coords;
+// (0, 0) for an unknown or ordinary node. Use with SetGroupSize for document-owned groups.
+IMGUI_NODE_EDITOR_API ImVec2 GetGroupSize(NodeId nodeId);
 // Moves the node (a group: with its nodes) to the center of the view, when it is next drawn.
 IMGUI_NODE_EDITOR_API void CenterNodeOnScreen(NodeId nodeId);
 IMGUI_NODE_EDITOR_API void SetNodeZPosition(NodeId nodeId, float z); // Sets node z position, nodes with higher value are drawn over nodes with lower value
 IMGUI_NODE_EDITOR_API float GetNodeZPosition(NodeId nodeId); // Returns node z position, defaults is 0.0f
 
-// Re-load the node's position/size from the editor's persisted settings
+// Re-load the node's position/size from the editor's persisted settings (a no-op when
+// Config::EnableSettingsPersistence is false)
 // (the SettingsFile, if any). Useful right after creating a node whose
 // previous layout you want to bring back without the user having to drag it.
 IMGUI_NODE_EDITOR_API void RestoreNodeState(NodeId nodeId);
@@ -675,6 +704,9 @@ IMGUI_NODE_EDITOR_API int BreakLinks(PinId pinId); // Break all links connected 
 // Moves the view to show all the nodes, as F does. Call it after End(). New nodes are measured over two frames:
 // to fit them, call it at their third frame.
 IMGUI_NODE_EDITOR_API void NavigateToContent(float duration = -1);
+// Center the view on a canvas point without changing zoom, selection or nodes.
+// Useful for minimaps. Non-finite points are ignored; call after Begin/End.
+IMGUI_NODE_EDITOR_API void NavigateToPoint(const ImVec2& point, float duration = -1);
 // Moves the view to the selected nodes, as Shift+F does (zoomIn: zoom in too, to fit them).
 IMGUI_NODE_EDITOR_API void NavigateToSelection(bool zoomIn = false, float duration = -1);
 
@@ -771,6 +803,11 @@ IMGUI_NODE_EDITOR_API ImGuiMouseButton GetBackgroundClickButtonIndex(); // -1 if
 IMGUI_NODE_EDITOR_API ImGuiMouseButton GetBackgroundDoubleClickButtonIndex(); // -1 if none
 
 IMGUI_NODE_EDITOR_API bool GetLinkPins(LinkId linkId, PinId* startPinId, PinId* endPinId); // pass nullptr if particular pin do not interest you; false for an unknown link and a link whose pins were deleted
+
+// Canvas bounds (min x, min y, max x, max y) of the submitted curve, including
+// arrows and selection borders. Zero for unknown or non-submitted links. Hosts
+// doing partial submission can cache this geometry after drawing a link.
+IMGUI_NODE_EDITOR_API ImVec4 GetLinkBounds(LinkId linkId);
 
 // True if the pin was ever connected to a link in its lifetime, even if it
 // is currently disconnected.

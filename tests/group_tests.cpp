@@ -130,3 +130,36 @@ TEST_CASE(SmallGroupRegions, "groups.small_group_regions_reach_the_minimum_size"
     test::Check(max.x - min.x == 26.0f, "the group is 26 wide: %g", max.x - min.x);
     test::Check(inside == ed::NodeId(1) && !outside, "its right edge reaches 2 px out: hovered 1 px out %d, 3 px out %d", (int)inside.Get(), (int)outside.Get());
 }
+
+TEST_CASE(DocumentGroupSize, "groups.document_owned_size_round_trips_after_native_resize", "UIKIT-198", test::TestFlags_None)
+{
+    auto config = test::MakeConfig(nullptr);
+    config.EnableSettingsPersistence = false;
+    test::Session session(config);
+    session.DefaultContent = [](int frame)
+    {
+        SubmitGroup(1, ImVec2(100, 100), ImVec2(300, 200), frame);
+        SubmitNode(2, ImVec2(700, 100), frame);
+    };
+    session.Run(3);
+    session.Use([]
+    {
+        const auto initial = ed::GetGroupSize(1), decorated = ed::GetNodeSize(1);
+        const auto ordinary = ed::GetGroupSize(2), unknown = ed::GetGroupSize(99);
+        test::Check(initial.x == 300 && initial.y == 200, "group size excludes decoration: (%g, %g)", initial.x, initial.y);
+        test::Check(decorated.x > initial.x && decorated.y > initial.y, "node bounds include padding and title");
+        test::Check(ordinary.x == 0 && ordinary.y == 0 && unknown.x == 0 && unknown.y == 0, "ordinary and unknown nodes have no group size");
+    });
+    const auto corner = session.Use([] { return ed::CanvasToScreen(ed::GetNodePosition(1) + ed::GetNodeSize(1)); });
+    session.Drag(corner - ImVec2(1, 1), corner + ImVec2(80, 60));
+    session.Run(3);
+    session.Use([]
+    {
+        const auto resized = ed::GetGroupSize(1);
+        test::Check(resized.x > 300 && resized.y > 200, "native resize is available to the document: (%g, %g)", resized.x, resized.y);
+        ed::SetGroupSize(1, ImVec2(300, 200));
+    });
+    session.Run(3);
+    const auto restored = session.Use([] { return ed::GetGroupSize(1); });
+    test::Check(restored.x == 300 && restored.y == 200, "document undo can restore the exact group rectangle: (%g, %g)", restored.x, restored.y);
+}

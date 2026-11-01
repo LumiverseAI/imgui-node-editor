@@ -3,6 +3,7 @@
 //------------------------------------------------------------------------------
 # include "harness.h"
 # include <cstdio>
+# include <limits>
 
 namespace {
 
@@ -17,6 +18,12 @@ struct LinkScene
     ImVec2 StartDirection = ImVec2(1.0f, 0.0f);
     ImVec2 EndDirection   = ImVec2(-1.0f, 0.0f);
     float  Thickness      = 1.0f;
+    bool   Outlined       = false;
+    ImVec4 Color          = ImColor(c_LinkColor);
+    ImVec4 OutlineColor   = ImColor(IM_COL32(0, 255, 0, 255));
+    float  OutlineThickness = 3.0f;
+    ImVec4 OuterColor = ImVec4(0, 0, 0, 0);
+    float OuterThickness = 1.0f;
 
     void Submit(int frame) const
     {
@@ -35,7 +42,10 @@ struct LinkScene
             ed::EndNode();
         }
         ed::PopStyleVar(2);
-        ed::Link(100, 11, 12, ImColor(c_LinkColor), Thickness);
+        if (Outlined)
+            ed::LinkWithOutline(100, 11, 12, Color, OutlineColor, Thickness, OutlineThickness, OuterColor, OuterThickness);
+        else
+            ed::Link(100, 11, 12, Color, Thickness);
     }
 };
 
@@ -46,6 +56,37 @@ int CountLinkVertices(const test::Session& session)
         if (color == c_LinkColor)
             ++count;
     return count;
+}
+
+
+// Measure triangle coverage at half opacity, not just opaque center vertices.
+// Older ImGui represents a thin AA line by an opaque centerline and alpha-zero
+// fringe vertices; counting only opaque vertices gives a false width of zero.
+float HalfOpacityWidth(const test::Geometry& geometry, ImU32 color)
+{
+    float low = FLT_MAX, high = -FLT_MAX;
+    const auto include = [&](float y) { low = ImMin(low, y); high = ImMax(high, y); };
+    for (size_t triangle = 0; triangle + 2 < geometry.Colors.size(); triangle += 3)
+    {
+        bool matching = true;
+        for (size_t corner = 0; corner < 3; ++corner)
+            matching = matching && ((geometry.Colors[triangle + corner] & ~IM_COL32_A_MASK) ==
+                                    (color & ~IM_COL32_A_MASK));
+        if (!matching) continue;
+        for (size_t corner = 0; corner < 3; ++corner)
+        {
+            const auto first = triangle + corner, second = triangle + (corner + 1) % 3;
+            const auto a = float((geometry.Colors[first] & IM_COL32_A_MASK) >> IM_COL32_A_SHIFT);
+            const auto b = float((geometry.Colors[second] & IM_COL32_A_MASK) >> IM_COL32_A_SHIFT);
+            if (a >= 127.5f) include(geometry.Positions[first].y);
+            if ((a < 127.5f) != (b < 127.5f))
+            {
+                const auto amount = (127.5f - a) / (b - a);
+                include(geometry.Positions[first].y + amount * (geometry.Positions[second].y - geometry.Positions[first].y));
+            }
+        }
+    }
+    return high >= low ? high - low : 0.0f;
 }
 
 } // namespace
@@ -147,4 +188,189 @@ TEST_CASE(TessellationAtZoom, "links.tessellation_follows_zoom", "CORE-15", test
     }
 
     test::Check(vertices[0] > 0 && vertices[1] >= 2 * vertices[0], "the link has at least twice the vertices at zoom 8: %d at zoom 1, %d at zoom 8", vertices[0], vertices[1]);
+}
+
+TEST_CASE(CachedLinkGeometry, "links.bounds_include_curvature_and_drawn_vertices", "UIKIT-198", test::TestFlags_None)
+{
+    auto config = test::MakeConfig(nullptr);
+    config.EnableSettingsPersistence = false;
+    test::Session session(config);
+    LinkScene scene;
+    scene.Start = ImVec2(200, 200);
+    scene.End = ImVec2(500, 200);
+    scene.StartDirection = ImVec2(0, 1);
+    scene.EndDirection = ImVec2(0, 1);
+    scene.Thickness = 8;
+    session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+    session.Run(3);
+    const auto bounds = session.Use([] { return ed::GetLinkBounds(100); });
+    test::Check(bounds.w > 250, "bounds include the curve bulging away from its horizontal endpoints: bottom %g", bounds.w);
+    int vertices = 0;
+    const auto geometry = test::Capture(session.DrawList);
+    session.Use([&]
+    {
+        for (size_t i = 0; i < geometry.Positions.size(); ++i)
+        {
+            if (geometry.Colors[i] != c_LinkColor)
+                continue;
+            ++vertices;
+            const auto point = ed::ScreenToCanvas(geometry.Positions[i]);
+            test::Check(point.x >= bounds.x && point.x <= bounds.z && point.y >= bounds.y && point.y <= bounds.w,
+                "drawn vertex (%g, %g) lies inside the cached bounds", point.x, point.y);
+        }
+    });
+    test::Check(vertices > 0, "the geometry control observed rendered link vertices");
+    session.Frame([](int) {});
+    const auto omitted = session.Use([] { return ed::GetLinkBounds(100); });
+    const auto unknown = session.Use([] { return ed::GetLinkBounds(999); });
+    test::Check(omitted.x == 0 && omitted.y == 0 && omitted.z == 0 && omitted.w == 0,
+        "a non-submitted link reports unavailable geometry");
+    test::Check(unknown.x == 0 && unknown.y == 0 && unknown.z == 0 && unknown.w == 0,
+        "an unknown link reports unavailable geometry");
+    test::Check(bounds.z > bounds.x && bounds.w > bounds.y, "a previously returned value stays independent");
+}
+
+
+TEST_CASE(OutlinedLink, "links.outline_preserves_literal_color_selection_and_bounds", "", test::TestFlags_None)
+{
+    auto config = test::MakeConfig(nullptr);
+    config.EnableSettingsPersistence = false;
+    test::Session session(config);
+    LinkScene scene;
+    scene.Start = ImVec2(200, 200);
+    scene.End = ImVec2(500, 240);
+    scene.Outlined = true;
+    scene.OutlineThickness = 6;
+    session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+    session.Run(3);
+    const ImU32 outline = ImColor(scene.OutlineColor);
+    const auto geometry = test::Capture(session.DrawList);
+    test::Check(test::FirstIndexOf(geometry, outline) >= 0, "outline vertices are emitted");
+    test::Check(test::FirstIndexOf(geometry, c_LinkColor) > test::FirstIndexOf(geometry, outline),
+        "literal core is painted over the outline");
+    session.Use([&]
+    {
+        ed::SelectLink(100);
+        ed::LinkId ids[4];
+        test::Check(ed::GetSelectedLinks(ids, 4) == 1 && ids[0] == ed::LinkId(100),
+            "outline and core share one selected identity");
+        ed::GetStyle().Colors[ed::StyleColor_SelLinkBorder] = ImVec4(1, 0, 1, 1);
+    });
+    session.Run(2);
+    const auto selected = test::Capture(session.DrawList);
+    test::Check(test::FirstIndexOf(selected, IM_COL32(255, 0, 255, 255)) >= 0,
+        "selection is rendered alongside the authored color and outline");
+    const auto bounds = session.Use([] { return ed::GetLinkBounds(100); });
+    session.Use([&]
+    {
+        for (size_t i = 0; i < selected.Positions.size(); ++i)
+        {
+            const auto color = selected.Colors[i];
+            if (color != c_LinkColor && color != outline && color != IM_COL32(255, 0, 255, 255)) continue;
+            const auto p = ed::ScreenToCanvas(selected.Positions[i]);
+            test::Check(p.x >= bounds.x && p.x <= bounds.z && p.y >= bounds.y && p.y <= bounds.w,
+                "cached bounds (%g, %g, %g, %g) contain vertex (%g, %g), color %08x",
+                bounds.x, bounds.y, bounds.z, bounds.w, p.x, p.y, color);
+        }
+        ed::ClearSelection();
+    });
+    scene.Color = ImVec4(1, 0, 0, 0);
+    session.Run(2);
+    const auto transparent = test::Capture(session.DrawList);
+    const auto automatic = ImGui::ColorConvertFloat4ToU32(ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    test::Check(test::FirstIndexOf(transparent, outline) >= 0, "a transparent core retains its outline");
+    test::Check(test::FirstIndexOf(transparent, c_LinkColor) < 0 && test::FirstIndexOf(transparent, automatic) < 0,
+        "explicit alpha zero never substitutes an automatic text color");
+    scene.Outlined = false;
+    session.Run(2);
+    const auto legacy = test::Capture(session.DrawList);
+    test::Check(test::FirstIndexOf(legacy, outline) < 0, "legacy submission clears the previous outline");
+    test::Check(test::FirstIndexOf(legacy, automatic) >= 0, "legacy Link retains its automatic-color sentinel");
+    session.Frame([&](int frame)
+    {
+        scene.Submit(frame);
+        test::Check(!ed::LinkWithOutline(101, 11, 12, scene.Color, scene.OutlineColor, 1, -1),
+            "negative outline width rejects");
+        test::Check(!ed::LinkWithOutline(102, 11, 12, scene.Color, scene.OutlineColor, 1,
+            std::numeric_limits<float>::infinity()), "infinite outline width rejects");
+        test::Check(!ed::LinkWithOutline(103, 11, 999, scene.Color, scene.OutlineColor),
+            "missing endpoint rejects");
+    });
+}
+
+TEST_CASE(OutlinedLinkLowZoom, "links.outline_and_selection_remain_outside_core_at_low_zoom", "", test::TestFlags_None)
+{
+    test::Storage storage;
+    storage.Global = R"({"view":{"scroll":{"x":0,"y":0},"zoom":0.1}})";
+    test::Session session(&storage);
+    LinkScene scene;
+    scene.Start = ImVec2(200, 300);
+    scene.End = ImVec2(1200, 300);
+    scene.Outlined = true;
+    scene.OutlineThickness = 1;
+    session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+    session.Run(3);
+    session.Use([]
+    {
+        ed::SelectLink(100);
+        ed::GetStyle().Colors[ed::StyleColor_SelLinkBorder] = ImVec4(1, 0, 1, 1);
+    });
+    session.Run(2);
+    const auto geometry = test::Capture(session.DrawList);
+    const auto width = [&](ImU32 color) { return HalfOpacityWidth(geometry, color); };
+    const auto core = width(c_LinkColor);
+    const auto outline = width(ImColor(scene.OutlineColor));
+    const auto selected = width(IM_COL32(255, 0, 255, 255));
+    test::Check(core > 0 && outline > core && selected > outline,
+        "nested visible strokes at zoom 0.1: core %g, outline %g, selection %g", core, outline, selected);
+}
+
+
+TEST_CASE(OutlinedLinkOuterStroke, "links.two_contrast_strokes_share_one_path_at_each_zoom", "", test::TestFlags_None)
+{
+    for (const float zoom : {1.0f, 0.1f})
+    {
+        test::Storage storage;
+        char settings[128];
+        snprintf(settings, sizeof(settings), R"({"view":{"scroll":{"x":0,"y":0},"zoom":%g}})", zoom);
+        storage.Global = settings;
+        test::Session session(&storage);
+        LinkScene scene;
+        scene.Start = ImVec2(200, 300);
+        scene.End = ImVec2(600, 300);
+        scene.Outlined = true;
+        scene.OutlineThickness = 1;
+        scene.OuterColor = ImVec4(0, 0, 1, 1);
+        session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+        session.Run(3);
+        session.Use([]
+        {
+            ed::SelectLink(100);
+            ed::GetStyle().Colors[ed::StyleColor_SelLinkBorder] = ImVec4(1, 0, 1, 1);
+        });
+        session.Run(2);
+        const auto geometry = test::Capture(session.DrawList);
+        const auto width = [&](ImU32 color) { return HalfOpacityWidth(geometry, color); };
+        const auto core = width(c_LinkColor), inner = width(ImColor(scene.OutlineColor));
+        const auto outer = width(ImColor(scene.OuterColor)), selected = width(IM_COL32(255, 0, 255, 255));
+        test::Check(core > 0 && inner >= core + 1.9f && outer >= inner + 1.9f && selected > outer,
+            "nested strokes remain visible at zoom %g: core %g, inner %g, outer %g, selected %g",
+            zoom, core, inner, outer, selected);
+        const auto bounds = session.Use([] { return ed::GetLinkBounds(100); });
+        session.Use([&]
+        {
+            for (size_t i = 0; i < geometry.Positions.size(); ++i)
+            {
+                const auto color = geometry.Colors[i];
+                if (color != ImColor(scene.OuterColor) && color != IM_COL32(255, 0, 255, 255)) continue;
+                const auto p = ed::ScreenToCanvas(geometry.Positions[i]);
+                test::Check(p.x >= bounds.x && p.x <= bounds.z && p.y >= bounds.y && p.y <= bounds.w,
+                    "bounds contain both outlines and selection at zoom %g", zoom);
+            }
+        });
+        scene.Outlined = false;
+        session.Run(2);
+        test::Check(test::FirstIndexOf(test::Capture(session.DrawList), ImColor(scene.OuterColor)) < 0,
+            "legacy submission also clears the outer stroke");
+    }
 }

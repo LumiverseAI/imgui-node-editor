@@ -3,6 +3,7 @@
 //------------------------------------------------------------------------------
 # include "harness.h"
 # include <cmath>
+# include <limits>
 
 namespace {
 
@@ -49,4 +50,35 @@ TEST_CASE(GridAtTinyZoom, "view.grid_at_tiny_zoom_is_bounded", "CORE-10", test::
         session.Frame(content);
     const float zoom = session.Use([] { return test::CurrentZoom(); });
     test::Check(zoom < 1e-5f, "view zoomed out to %g", zoom);
+}
+
+TEST_CASE(MinimapNavigation, "view.navigate_to_point_preserves_zoom_selection_and_nodes", "UIKIT-201", test::TestFlags_None)
+{
+    auto config = test::MakeConfig(nullptr);
+    config.EnableSettingsPersistence = false;
+    test::Session session(config);
+    ImVec2 screenOrigin;
+    session.BeforeEditor = [&] { screenOrigin = ImGui::GetCursorScreenPos(); };
+    session.DefaultContent = [](int frame)
+    {
+        if (frame == 0)
+            ed::SetNodePosition(1, ImVec2(100, 200));
+        ed::BeginNode(1);
+        ImGui::TextUnformatted("Node");
+        ed::EndNode();
+    };
+    session.Run(3);
+    session.Use([] { ed::SelectNode(1); ed::NavigateToPoint(ImVec2(5000, -3000), 0); });
+    session.Run(3);
+    session.Use([] { ed::NavigateToPoint(ImVec2(std::numeric_limits<float>::quiet_NaN(), 0), 0); });
+    session.Run(2);
+    session.Use([&]
+    {
+        const auto center = ed::ScreenToCanvas(screenOrigin + ed::GetScreenSize() * .5f);
+        const auto position = ed::GetNodePosition(1);
+        test::Check(std::fabs(center.x - 5000) < .01f && std::fabs(center.y + 3000) < .01f,
+            "view centered on the minimap point: (%g, %g)", center.x, center.y);
+        test::Check(test::CurrentZoom() == 1, "zoom stays unchanged");
+        test::Check(ed::IsNodeSelected(1) && position.x == 100 && position.y == 200, "selection and node geometry stay unchanged");
+    });
 }

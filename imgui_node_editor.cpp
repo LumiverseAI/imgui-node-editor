@@ -962,12 +962,31 @@ ed::NodeRegion ed::Node::GetRegion(const ImVec2& point) const
 // Link
 //
 //------------------------------------------------------------------------------
+float ed::Link::GetCoreWidth() const
+{
+    // Outlined links need the same physical core on every supported ImGui.
+    // Retain the legacy stroke policy for ordinary Link() submissions.
+    return m_OutlineThickness > 0.0f || m_OuterThickness > 0.0f
+        ? ImMax(m_Thickness, Editor->GetView().InvScale())
+        : VisibleStrokeThickness(Editor, m_Thickness);
+}
+
+float ed::Link::GetOutlineWidth() const
+{
+    return 2.0f * ((m_OutlineThickness > 0.0f ? ImMax(m_OutlineThickness, Editor->GetView().InvScale()) : 0.0f)
+                + (m_OuterThickness > 0.0f ? ImMax(m_OuterThickness, Editor->GetView().InvScale()) : 0.0f));
+}
+
 void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
 {
     if (flags == None)
     {
         drawList->ChannelsSetCurrent(c_LinkChannel_Links);
 
+        if (m_OuterThickness > 0.0f)
+            Draw(drawList, m_OuterColor, GetOutlineWidth());
+        if (m_OutlineThickness > 0.0f)
+            Draw(drawList, m_OutlineColor, ImMax(m_OutlineThickness, Editor->GetView().InvScale()) * 2.0f);
         Draw(drawList, m_Color, 0.0f);
     }
     else if (flags & Selected)
@@ -976,7 +995,7 @@ void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
 
         drawList->ChannelsSetCurrent(c_LinkChannel_Selection);
 
-        Draw(drawList, borderColor, c_LinkSelectedBorder);
+        Draw(drawList, borderColor, GetOutlineWidth() + c_LinkSelectedBorder);
     }
     else if (flags & Hovered)
     {
@@ -984,13 +1003,13 @@ void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
 
         drawList->ChannelsSetCurrent(c_LinkChannel_Selection);
 
-        Draw(drawList, borderColor, c_LinkHoveredBorder);
+        Draw(drawList, borderColor, GetOutlineWidth() + c_LinkHoveredBorder);
     }
     else if (flags & Highlighted)
     {
         drawList->ChannelsSetCurrent(c_LinkChannel_Selection);
 
-        Draw(drawList, m_HighlightColor, c_LinkHighlightedBorder);
+        Draw(drawList, m_HighlightColor, GetOutlineWidth() + c_LinkHighlightedBorder);
     }
 }
 
@@ -1000,7 +1019,9 @@ void ed::Link::Draw(ImDrawList* drawList, ImU32 color, float extraThickness) con
         return;
 
     const auto path      = GetPath();
-    const auto thickness = VisibleStrokeThickness(Editor, m_Thickness + extraThickness);
+    // Keep outer strokes outside the zoom-stable core instead of clamping each
+    // layer to the same minimum width at low zoom.
+    const auto thickness = GetCoreWidth() + extraThickness;
 
     for (int i = 0; i < path.m_SegmentCount; ++i)
     {
@@ -1222,7 +1243,7 @@ bool ed::Link::TestHit(const ImVec2& point, float extraThickness) const
     if (!m_IsLive)
         return false;
 
-    const auto maxDistance = m_Thickness + extraThickness;
+    const auto maxDistance = GetCoreWidth() + GetOutlineWidth() * 0.5f + extraThickness;
 
     auto bounds = GetCurveBounds();
     bounds.Expand(maxDistance);
@@ -1282,15 +1303,16 @@ ImRect ed::Link::GetBounds() const
         return ImRect();
 
     // What Draw() covers with the widest border.
-    const auto border = ImMax(c_LinkSelectedBorder, ImMax(c_LinkHighlightedBorder, c_LinkHoveredBorder));
+    const auto border = GetOutlineWidth() + ImMax(c_LinkSelectedBorder, ImMax(c_LinkHighlightedBorder, c_LinkHoveredBorder));
 
-    auto extent = (m_Thickness + border) * 0.5f;
+    // Include the zoom-stable minimum stroke and its antialias/pixel fringe.
+    auto extent = (GetCoreWidth() + border) * 0.5f;
     for (auto pin : { m_StartPin, m_EndPin })
         if (pin->m_ArrowSize > 0.0f)
             extent = ImMax(extent, ImMax((pin->m_ArrowWidth + border) * 0.5f, border));
 
     auto bounds = GetCurveBounds();
-    bounds.Expand(extent);
+    bounds.Expand(extent + Editor->GetView().InvScale());
     return bounds;
 }
 
@@ -2013,7 +2035,8 @@ void ed::EditorContext::End()
     m_IsFirstFrame = false;
 }
 
-bool ed::EditorContext::DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU32 color, float thickness)
+bool ed::EditorContext::DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU32 color, float thickness,
+    ImU32 outlineColor, float outlineThickness, ImU32 outerColor, float outerThickness)
 {
     //auto& editorStyle = GetStyle();
 
@@ -2032,6 +2055,10 @@ bool ed::EditorContext::DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU3
     link->m_Color         = color;
     link->m_HighlightColor= GetColor(StyleColor_HighlightLinkBorder);
     link->m_Thickness     = thickness;
+    link->m_OutlineColor  = outlineColor;
+    link->m_OutlineThickness = (outlineColor & IM_COL32_A_MASK) != 0 ? outlineThickness : 0.0f;
+    link->m_OuterColor = outerColor;
+    link->m_OuterThickness = (outerColor & IM_COL32_A_MASK) != 0 ? outerThickness : 0.0f;
     link->m_IsLive        = true;
 
     link->UpdateEndpoints();
@@ -2102,6 +2129,12 @@ ImVec2 ed::EditorContext::GetNodeSize(NodeId nodeId)
     return node->m_Bounds.GetSize();
 }
 
+ImVec2 ed::EditorContext::GetGroupSize(NodeId nodeId)
+{
+    auto node = FindNode(nodeId);
+    return node && IsGroup(node) ? node->m_GroupBounds.GetSize() : ImVec2(0, 0);
+}
+
 void ed::EditorContext::SetNodeZPosition(NodeId nodeId, float z)
 {
     auto node = FindNode(nodeId);
@@ -2125,7 +2158,8 @@ float ed::EditorContext::GetNodeZPosition(NodeId nodeId)
 
 void ed::EditorContext::MarkNodeToRestoreState(Node* node)
 {
-    node->m_RestoreState = true;
+    if (m_Config.EnableSettingsPersistence)
+        node->m_RestoreState = true;
 }
 
 void ed::EditorContext::UpdateNodeState(Node* node)
@@ -2133,6 +2167,8 @@ void ed::EditorContext::UpdateNodeState(Node* node)
     bool tryLoadState = node->m_RestoreState;
 
     node->m_RestoreState = false;
+    if (!m_Config.EnableSettingsPersistence)
+        return;
 
     auto settings = m_Settings.FindNode(node->m_ID);
     if (!settings)
@@ -2167,7 +2203,8 @@ void ed::EditorContext::RemoveSettings(Object* object)
 {
     if (auto node = object->AsNode())
     {
-        m_Settings.RemoveNode(node->m_ID);
+        if (m_Config.EnableSettingsPersistence)
+            m_Settings.RemoveNode(node->m_ID);
         MakeDirty(SaveReasonFlags::RemoveNode, node);
     }
 }
@@ -2543,17 +2580,20 @@ ed::Node* ed::EditorContext::CreateNode(NodeId id)
     m_Nodes.push_back({id, node});
     //std::sort(Nodes.begin(), Nodes.end());
 
-    auto settings = m_Settings.FindNode(id);
-    if (!settings)
-        settings = m_Settings.AddNode(id);
+    if (m_Config.EnableSettingsPersistence)
+    {
+        auto settings = m_Settings.FindNode(id);
+        if (!settings)
+            settings = m_Settings.AddNode(id);
 
-    if (!settings->m_WasUsed)
-        MarkNodeToRestoreState(node);
+        if (!settings->m_WasUsed)
+            MarkNodeToRestoreState(node);
 
-    UpdateNodeState(node);
+        UpdateNodeState(node);
 
-    if (settings->m_GroupSize.x > 0 || settings->m_GroupSize.y > 0)
-        node->m_Type = NodeType::Group;
+        if (settings->m_GroupSize.x > 0 || settings->m_GroupSize.y > 0)
+            node->m_Type = NodeType::Group;
+    }
 
     node->m_IsLive = false;
 
@@ -2668,7 +2708,8 @@ ed::Link* ed::EditorContext::GetLink(LinkId id)
 
 void ed::EditorContext::LoadSettings()
 {
-    ed::Settings::Parse(m_Config.Load(), m_Settings);
+    if (m_Config.EnableSettingsPersistence)
+        ed::Settings::Parse(m_Config.Load(), m_Settings);
 }
 
 void ed::EditorContext::RestoreView()
@@ -2688,6 +2729,14 @@ void ed::EditorContext::RestoreView()
 
 void ed::EditorContext::SaveSettings()
 {
+    if (!m_Config.EnableSettingsPersistence)
+    {
+        // Keep global dirty reasons for group ordering during End(), but acknowledge
+        // them before any node traversal, JSON serialization or callback. This mode
+        // never creates NodeSettings records, so clearing the flags is constant work.
+        m_Settings.ClearDirty();
+        return;
+    }
     m_Config.BeginSave();
 
     for (auto& node : m_Nodes)
@@ -2726,7 +2775,7 @@ void ed::EditorContext::MakeDirty(SaveReasonFlags reason)
 
 void ed::EditorContext::MakeDirty(SaveReasonFlags reason, Node* node)
 {
-    m_Settings.MakeDirty(reason, node);
+    m_Settings.MakeDirty(reason, m_Config.EnableSettingsPersistence ? node : nullptr);
 }
 
 ed::Link* ed::EditorContext::FindLinkAt(const ImVec2& p)
@@ -3230,6 +3279,9 @@ void ed::NodeSettings::MakeDirty(SaveReasonFlags reason)
 
 ed::json::value ed::NodeSettings::Serialize()
 {
+# ifdef IMGUI_NODE_EDITOR_TEST_SETTINGS_SERIALIZE
+    IMGUI_NODE_EDITOR_TEST_SETTINGS_SERIALIZE();
+# endif
     json::value result;
     result["location"]["x"] = m_Location.x;
     result["location"]["y"] = m_Location.y;
@@ -3282,6 +3334,9 @@ ed::NodeSettings* ed::Settings::AddNode(NodeId id)
 
 ed::NodeSettings* ed::Settings::FindNode(NodeId id)
 {
+# ifdef IMGUI_NODE_EDITOR_TEST_SETTINGS_LOOKUP
+    IMGUI_NODE_EDITOR_TEST_SETTINGS_LOOKUP();
+# endif
     for (auto& settings : m_Nodes)
         if (settings.m_ID == id)
             return &settings;
@@ -3332,6 +3387,9 @@ void ed::Settings::MakeDirty(SaveReasonFlags reason, Node* node)
 
 std::string ed::Settings::Serialize()
 {
+# ifdef IMGUI_NODE_EDITOR_TEST_SETTINGS_SERIALIZE
+    IMGUI_NODE_EDITOR_TEST_SETTINGS_SERIALIZE();
+# endif
     json::value result;
 
     auto serializeObjectId = [](ObjectId id)
