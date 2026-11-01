@@ -236,7 +236,8 @@ TEST_CASE(OutlinedLink, "links.outline_preserves_literal_color_selection_and_bou
             if (color != c_LinkColor && color != outline && color != IM_COL32(255, 0, 255, 255)) continue;
             const auto p = ed::ScreenToCanvas(selected.Positions[i]);
             test::Check(p.x >= bounds.x && p.x <= bounds.z && p.y >= bounds.y && p.y <= bounds.w,
-                "cached bounds contain the outline and selection");
+                "cached bounds (%g, %g, %g, %g) contain vertex (%g, %g), color %08x",
+                bounds.x, bounds.y, bounds.z, bounds.w, p.x, p.y, color);
         }
         ed::ClearSelection();
     });
