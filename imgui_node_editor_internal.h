@@ -485,6 +485,8 @@ struct Link final: Object
     Pin*   m_EndPin;
     ImU32  m_Color;
     ImU32  m_HighlightColor;
+    ImU32  m_OutlineColor;
+    float  m_OutlineThickness;
     float  m_Thickness;
     ImVec2 m_Start;
     ImVec2 m_End;
@@ -495,6 +497,8 @@ struct Link final: Object
         , m_StartPin(nullptr)
         , m_EndPin(nullptr)
         , m_Color(IM_COL32_WHITE)
+        , m_OutlineColor(0)
+        , m_OutlineThickness(0.0f)
         , m_Thickness(1.0f)
     {
     }
@@ -1363,7 +1367,8 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     void Begin(const char* id, const ImVec2& size = ImVec2(0, 0));
     void End();
 
-    bool DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU32 color, float thickness);
+    bool DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU32 color, float thickness,
+        ImU32 outlineColor = 0, float outlineThickness = 0.0f);
 
 
     NodeBuilder& GetNodeBuilder() { return m_NodeBuilder; }

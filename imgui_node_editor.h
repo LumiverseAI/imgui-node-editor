@@ -521,6 +521,16 @@ IMGUI_NODE_EDITOR_API ImDrawList* GetNodeBackgroundDrawList(NodeId nodeId);
 // override.
 IMGUI_NODE_EDITOR_API bool Link(LinkId id, PinId startPinId, PinId endPinId, const ImVec4& color = ImVec4(0, 0, 0, 0), float thickness = 1.0f);
 
+// Declares one link with literal RGBA colors, including alpha == 0.
+// Unlike Link(), no color is interpreted as an automatic-color sentinel.
+// The outline is painted behind the core on the same path and keeps the same
+// selectable identity. outlineThickness is the additional width on each side,
+// in canvas units. Selection/hover borders remain outside the complete stroke.
+// Zero outline alpha or width disables it. Non-finite or negative widths reject
+// the submission without changing the link. Submit only once per frame per ID.
+IMGUI_NODE_EDITOR_API bool LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
+    const ImVec4& color, const ImVec4& outlineColor, float thickness = 1.0f, float outlineThickness = 1.0f);
+
 // Trigger a one-shot animated "flow" pulse along a link. Calling this once
 // is enough; the editor handles the time-bounded animation internally.
 IMGUI_NODE_EDITOR_API void Flow(LinkId linkId, FlowDirection direction = FlowDirection::Forward);

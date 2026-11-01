@@ -3,6 +3,7 @@
 //------------------------------------------------------------------------------
 # include "harness.h"
 # include <cstdio>
+# include <limits>
 
 namespace {
 
@@ -17,6 +18,10 @@ struct LinkScene
     ImVec2 StartDirection = ImVec2(1.0f, 0.0f);
     ImVec2 EndDirection   = ImVec2(-1.0f, 0.0f);
     float  Thickness      = 1.0f;
+    bool   Outlined       = false;
+    ImVec4 Color          = ImColor(c_LinkColor);
+    ImVec4 OutlineColor   = ImColor(IM_COL32(0, 255, 0, 255));
+    float  OutlineThickness = 3.0f;
 
     void Submit(int frame) const
     {
@@ -35,7 +40,10 @@ struct LinkScene
             ed::EndNode();
         }
         ed::PopStyleVar(2);
-        ed::Link(100, 11, 12, ImColor(c_LinkColor), Thickness);
+        if (Outlined)
+            ed::LinkWithOutline(100, 11, 12, Color, OutlineColor, Thickness, OutlineThickness);
+        else
+            ed::Link(100, 11, 12, Color, Thickness);
     }
 };
 
@@ -187,4 +195,71 @@ TEST_CASE(CachedLinkGeometry, "links.bounds_include_curvature_and_drawn_vertices
     test::Check(unknown.x == 0 && unknown.y == 0 && unknown.z == 0 && unknown.w == 0,
         "an unknown link reports unavailable geometry");
     test::Check(bounds.z > bounds.x && bounds.w > bounds.y, "a previously returned value stays independent");
+}
+
+
+TEST_CASE(OutlinedLink, "links.outline_preserves_literal_color_selection_and_bounds", "", test::TestFlags_None)
+{
+    auto config = test::MakeConfig(nullptr);
+    config.EnableSettingsPersistence = false;
+    test::Session session(config);
+    LinkScene scene;
+    scene.Start = ImVec2(200, 200);
+    scene.End = ImVec2(500, 240);
+    scene.Outlined = true;
+    scene.OutlineThickness = 6;
+    session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+    session.Run(3);
+    const ImU32 outline = ImColor(scene.OutlineColor);
+    const auto geometry = test::Capture(session.DrawList);
+    test::Check(test::FirstIndexOf(geometry, outline) >= 0, "outline vertices are emitted");
+    test::Check(test::FirstIndexOf(geometry, c_LinkColor) > test::FirstIndexOf(geometry, outline),
+        "literal core is painted over the outline");
+    session.Use([&]
+    {
+        ed::SelectLink(100);
+        ed::LinkId ids[4];
+        test::Check(ed::GetSelectedLinks(ids, 4) == 1 && ids[0] == ed::LinkId(100),
+            "outline and core share one selected identity");
+        ed::GetStyle().Colors[ed::StyleColor_SelLinkBorder] = ImVec4(1, 0, 1, 1);
+    });
+    session.Run(2);
+    const auto selected = test::Capture(session.DrawList);
+    test::Check(test::FirstIndexOf(selected, IM_COL32(255, 0, 255, 255)) >= 0,
+        "selection is rendered alongside the authored color and outline");
+    const auto bounds = session.Use([] { return ed::GetLinkBounds(100); });
+    session.Use([&]
+    {
+        for (size_t i = 0; i < selected.Positions.size(); ++i)
+        {
+            const auto color = selected.Colors[i];
+            if (color != c_LinkColor && color != outline && color != IM_COL32(255, 0, 255, 255)) continue;
+            const auto p = ed::ScreenToCanvas(selected.Positions[i]);
+            test::Check(p.x >= bounds.x && p.x <= bounds.z && p.y >= bounds.y && p.y <= bounds.w,
+                "cached bounds contain the outline and selection");
+        }
+        ed::ClearSelection();
+    });
+    scene.Color = ImVec4(1, 0, 0, 0);
+    session.Run(2);
+    const auto transparent = test::Capture(session.DrawList);
+    const auto automatic = ImGui::ColorConvertFloat4ToU32(ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    test::Check(test::FirstIndexOf(transparent, outline) >= 0, "a transparent core retains its outline");
+    test::Check(test::FirstIndexOf(transparent, c_LinkColor) < 0 && test::FirstIndexOf(transparent, automatic) < 0,
+        "explicit alpha zero never substitutes an automatic text color");
+    scene.Outlined = false;
+    session.Run(2);
+    const auto legacy = test::Capture(session.DrawList);
+    test::Check(test::FirstIndexOf(legacy, outline) < 0, "legacy submission clears the previous outline");
+    test::Check(test::FirstIndexOf(legacy, automatic) >= 0, "legacy Link retains its automatic-color sentinel");
+    session.Frame([&](int frame)
+    {
+        scene.Submit(frame);
+        test::Check(!ed::LinkWithOutline(101, 11, 12, scene.Color, scene.OutlineColor, 1, -1),
+            "negative outline width rejects");
+        test::Check(!ed::LinkWithOutline(102, 11, 12, scene.Color, scene.OutlineColor, 1,
+            std::numeric_limits<float>::infinity()), "infinite outline width rejects");
+        test::Check(!ed::LinkWithOutline(103, 11, 999, scene.Color, scene.OutlineColor),
+            "missing endpoint rejects");
+    });
 }
