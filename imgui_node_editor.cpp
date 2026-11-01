@@ -1286,13 +1286,14 @@ ImRect ed::Link::GetBounds() const
     // What Draw() covers with the widest border.
     const auto border = m_OutlineThickness * 2.0f + ImMax(c_LinkSelectedBorder, ImMax(c_LinkHighlightedBorder, c_LinkHoveredBorder));
 
-    auto extent = (m_Thickness + border) * 0.5f;
+    // Include the zoom-stable minimum stroke and its antialias/pixel fringe.
+    auto extent = VisibleStrokeThickness(Editor, m_Thickness + border) * 0.5f;
     for (auto pin : { m_StartPin, m_EndPin })
         if (pin->m_ArrowSize > 0.0f)
             extent = ImMax(extent, ImMax((pin->m_ArrowWidth + border) * 0.5f, border));
 
     auto bounds = GetCurveBounds();
-    bounds.Expand(extent);
+    bounds.Expand(extent + Editor->GetView().InvScale());
     return bounds;
 }
 
