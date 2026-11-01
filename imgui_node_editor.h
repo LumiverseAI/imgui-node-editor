@@ -686,6 +686,9 @@ IMGUI_NODE_EDITOR_API int BreakLinks(PinId pinId); // Break all links connected 
 // Moves the view to show all the nodes, as F does. Call it after End(). New nodes are measured over two frames:
 // to fit them, call it at their third frame.
 IMGUI_NODE_EDITOR_API void NavigateToContent(float duration = -1);
+// Center the view on a canvas point without changing zoom, selection or nodes.
+// Useful for minimaps. Non-finite points are ignored; call after Begin/End.
+IMGUI_NODE_EDITOR_API void NavigateToPoint(const ImVec2& point, float duration = -1);
 // Moves the view to the selected nodes, as Shift+F does (zoomIn: zoom in too, to fit them).
 IMGUI_NODE_EDITOR_API void NavigateToSelection(bool zoomIn = false, float duration = -1);
 

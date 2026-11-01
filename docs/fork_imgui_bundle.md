@@ -264,6 +264,8 @@ excluding the title and padding, and returns zero for unknown or ordinary nodes.
 `GetLinkBounds()` exposes the submitted curve's actual canvas bounds, including
 curvature, arrows and selection borders. Cache them for off-screen links; an
 unknown or non-submitted link returns zero, rather than fabricated geometry.
+`NavigateToPoint()` centers the view on a canvas coordinate for minimap navigation
+without changing zoom, selection or node positions.
 
 The headless settings tests count settings lookups and both global/per-node serialization.
 They exercise retained geometry, groups, selection and partial submission with persistence

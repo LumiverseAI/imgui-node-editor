@@ -9,6 +9,7 @@
 //------------------------------------------------------------------------------
 # include "imgui_node_editor_internal.h"
 # include <algorithm>
+# include <cmath>
 
 
 //------------------------------------------------------------------------------
@@ -603,6 +604,15 @@ int ax::NodeEditor::BreakLinks(PinId pinId)
 void ax::NodeEditor::NavigateToContent(float duration)
 {
     CurrentEditor()->NavigateTo(CurrentEditor()->GetContentBounds(), true, duration);
+}
+
+void ax::NodeEditor::NavigateToPoint(const ImVec2& point, float duration)
+{
+    if (!std::isfinite(point.x) || !std::isfinite(point.y))
+        return;
+    auto bounds = CurrentEditor()->GetViewRect();
+    bounds.Translate(point - bounds.GetCenter());
+    CurrentEditor()->NavigateTo(bounds, false, duration);
 }
 
 void ax::NodeEditor::NavigateToSelection(bool zoomIn, float duration)
