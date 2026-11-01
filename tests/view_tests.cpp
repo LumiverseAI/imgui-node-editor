@@ -57,6 +57,8 @@ TEST_CASE(MinimapNavigation, "view.navigate_to_point_preserves_zoom_selection_an
     auto config = test::MakeConfig(nullptr);
     config.EnableSettingsPersistence = false;
     test::Session session(config);
+    ImVec2 screenOrigin;
+    session.BeforeEditor = [&] { screenOrigin = ImGui::GetCursorScreenPos(); };
     session.DefaultContent = [](int frame)
     {
         if (frame == 0)
@@ -70,10 +72,9 @@ TEST_CASE(MinimapNavigation, "view.navigate_to_point_preserves_zoom_selection_an
     session.Run(3);
     session.Use([] { ed::NavigateToPoint(ImVec2(std::numeric_limits<float>::quiet_NaN(), 0), 0); });
     session.Run(2);
-    session.Use([]
+    session.Use([&]
     {
-        const auto origin = ed::CanvasToScreen(ImVec2(0, 0));
-        const auto center = ed::ScreenToCanvas(origin + ed::GetScreenSize() * .5f);
+        const auto center = ed::ScreenToCanvas(screenOrigin + ed::GetScreenSize() * .5f);
         const auto position = ed::GetNodePosition(1);
         test::Check(std::fabs(center.x - 5000) < .01f && std::fabs(center.y + 3000) < .01f,
             "view centered on the minimap point: (%g, %g)", center.x, center.y);
