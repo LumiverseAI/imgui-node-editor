@@ -513,6 +513,7 @@ struct Link final: Object
 
     virtual void Draw(ImDrawList* drawList, DrawFlags flags = None) override final;
     void Draw(ImDrawList* drawList, ImU32 color, float extraThickness = 0.0f) const;
+    float GetCoreWidth() const;
     float GetOutlineWidth() const;
 
     void UpdateEndpoints();

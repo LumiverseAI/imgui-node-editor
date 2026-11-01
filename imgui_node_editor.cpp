@@ -962,10 +962,19 @@ ed::NodeRegion ed::Node::GetRegion(const ImVec2& point) const
 // Link
 //
 //------------------------------------------------------------------------------
+float ed::Link::GetCoreWidth() const
+{
+    // Outlined links need the same physical core on every supported ImGui.
+    // Retain the legacy stroke policy for ordinary Link() submissions.
+    return m_OutlineThickness > 0.0f || m_OuterThickness > 0.0f
+        ? ImMax(m_Thickness, Editor->GetView().InvScale())
+        : VisibleStrokeThickness(Editor, m_Thickness);
+}
+
 float ed::Link::GetOutlineWidth() const
 {
-    return 2.0f * ((m_OutlineThickness > 0.0f ? VisibleStrokeThickness(Editor, m_OutlineThickness) : 0.0f)
-                + (m_OuterThickness > 0.0f ? VisibleStrokeThickness(Editor, m_OuterThickness) : 0.0f));
+    return 2.0f * ((m_OutlineThickness > 0.0f ? ImMax(m_OutlineThickness, Editor->GetView().InvScale()) : 0.0f)
+                + (m_OuterThickness > 0.0f ? ImMax(m_OuterThickness, Editor->GetView().InvScale()) : 0.0f));
 }
 
 void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
@@ -977,7 +986,7 @@ void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
         if (m_OuterThickness > 0.0f)
             Draw(drawList, m_OuterColor, GetOutlineWidth());
         if (m_OutlineThickness > 0.0f)
-            Draw(drawList, m_OutlineColor, VisibleStrokeThickness(Editor, m_OutlineThickness) * 2.0f);
+            Draw(drawList, m_OutlineColor, ImMax(m_OutlineThickness, Editor->GetView().InvScale()) * 2.0f);
         Draw(drawList, m_Color, 0.0f);
     }
     else if (flags & Selected)
@@ -1012,7 +1021,7 @@ void ed::Link::Draw(ImDrawList* drawList, ImU32 color, float extraThickness) con
     const auto path      = GetPath();
     // Keep outer strokes outside the zoom-stable core instead of clamping each
     // layer to the same minimum width at low zoom.
-    const auto thickness = VisibleStrokeThickness(Editor, m_Thickness) + extraThickness;
+    const auto thickness = GetCoreWidth() + extraThickness;
 
     for (int i = 0; i < path.m_SegmentCount; ++i)
     {
@@ -1234,7 +1243,7 @@ bool ed::Link::TestHit(const ImVec2& point, float extraThickness) const
     if (!m_IsLive)
         return false;
 
-    const auto maxDistance = VisibleStrokeThickness(Editor, m_Thickness) + GetOutlineWidth() * 0.5f + extraThickness;
+    const auto maxDistance = GetCoreWidth() + GetOutlineWidth() * 0.5f + extraThickness;
 
     auto bounds = GetCurveBounds();
     bounds.Expand(maxDistance);
@@ -1297,7 +1306,7 @@ ImRect ed::Link::GetBounds() const
     const auto border = GetOutlineWidth() + ImMax(c_LinkSelectedBorder, ImMax(c_LinkHighlightedBorder, c_LinkHoveredBorder));
 
     // Include the zoom-stable minimum stroke and its antialias/pixel fringe.
-    auto extent = (VisibleStrokeThickness(Editor, m_Thickness) + border) * 0.5f;
+    auto extent = (GetCoreWidth() + border) * 0.5f;
     for (auto pin : { m_StartPin, m_EndPin })
         if (pin->m_ArrowSize > 0.0f)
             extent = ImMax(extent, ImMax((pin->m_ArrowWidth + border) * 0.5f, border));
