@@ -487,6 +487,8 @@ struct Link final: Object
     ImU32  m_HighlightColor;
     ImU32  m_OutlineColor;
     float  m_OutlineThickness;
+    ImU32  m_OuterColor;
+    float  m_OuterThickness;
     float  m_Thickness;
     ImVec2 m_Start;
     ImVec2 m_End;
@@ -499,6 +501,8 @@ struct Link final: Object
         , m_Color(IM_COL32_WHITE)
         , m_OutlineColor(0)
         , m_OutlineThickness(0.0f)
+        , m_OuterColor(0)
+        , m_OuterThickness(0.0f)
         , m_Thickness(1.0f)
     {
     }
@@ -509,6 +513,7 @@ struct Link final: Object
 
     virtual void Draw(ImDrawList* drawList, DrawFlags flags = None) override final;
     void Draw(ImDrawList* drawList, ImU32 color, float extraThickness = 0.0f) const;
+    float GetOutlineWidth() const;
 
     void UpdateEndpoints();
 
@@ -1368,7 +1373,7 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     void End();
 
     bool DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU32 color, float thickness,
-        ImU32 outlineColor = 0, float outlineThickness = 0.0f);
+        ImU32 outlineColor = 0, float outlineThickness = 0.0f, ImU32 outerColor = 0, float outerThickness = 0.0f);
 
 
     NodeBuilder& GetNodeBuilder() { return m_NodeBuilder; }

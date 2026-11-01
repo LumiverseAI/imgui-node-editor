@@ -22,6 +22,8 @@ struct LinkScene
     ImVec4 Color          = ImColor(c_LinkColor);
     ImVec4 OutlineColor   = ImColor(IM_COL32(0, 255, 0, 255));
     float  OutlineThickness = 3.0f;
+    ImVec4 OuterColor = ImVec4(0, 0, 0, 0);
+    float OuterThickness = 1.0f;
 
     void Submit(int frame) const
     {
@@ -41,7 +43,7 @@ struct LinkScene
         }
         ed::PopStyleVar(2);
         if (Outlined)
-            ed::LinkWithOutline(100, 11, 12, Color, OutlineColor, Thickness, OutlineThickness);
+            ed::LinkWithOutline(100, 11, 12, Color, OutlineColor, Thickness, OutlineThickness, OuterColor, OuterThickness);
         else
             ed::Link(100, 11, 12, Color, Thickness);
     }
@@ -300,4 +302,64 @@ TEST_CASE(OutlinedLinkLowZoom, "links.outline_and_selection_remain_outside_core_
     const auto selected = width(IM_COL32(255, 0, 255, 255));
     test::Check(core > 0 && outline > core && selected > outline,
         "nested visible strokes at zoom 0.1: core %g, outline %g, selection %g", core, outline, selected);
+}
+
+
+TEST_CASE(OutlinedLinkOuterStroke, "links.two_contrast_strokes_share_one_path_at_each_zoom", "", test::TestFlags_None)
+{
+    for (const float zoom : {1.0f, 0.1f})
+    {
+        test::Storage storage;
+        char settings[128];
+        snprintf(settings, sizeof(settings), R"({"view":{"scroll":{"x":0,"y":0},"zoom":%g}})", zoom);
+        storage.Global = settings;
+        test::Session session(&storage);
+        LinkScene scene;
+        scene.Start = ImVec2(200, 300);
+        scene.End = ImVec2(600, 300);
+        scene.Outlined = true;
+        scene.OutlineThickness = 1;
+        scene.OuterColor = ImVec4(0, 0, 1, 1);
+        session.DefaultContent = [&](int frame) { scene.Submit(frame); };
+        session.Run(3);
+        session.Use([]
+        {
+            ed::SelectLink(100);
+            ed::GetStyle().Colors[ed::StyleColor_SelLinkBorder] = ImVec4(1, 0, 1, 1);
+        });
+        session.Run(2);
+        const auto geometry = test::Capture(session.DrawList);
+        const auto width = [&](ImU32 color)
+        {
+            float low = FLT_MAX, high = -FLT_MAX;
+            for (size_t i = 0; i < geometry.Colors.size(); ++i)
+                if (geometry.Colors[i] == color)
+                {
+                    low = ImMin(low, geometry.Positions[i].y);
+                    high = ImMax(high, geometry.Positions[i].y);
+                }
+            return high - low;
+        };
+        const auto core = width(c_LinkColor), inner = width(ImColor(scene.OutlineColor));
+        const auto outer = width(ImColor(scene.OuterColor)), selected = width(IM_COL32(255, 0, 255, 255));
+        test::Check(core > 0 && inner >= core + 1.9f && outer >= inner + 1.9f && selected > outer,
+            "nested strokes remain visible at zoom %g: core %g, inner %g, outer %g, selected %g",
+            zoom, core, inner, outer, selected);
+        const auto bounds = session.Use([] { return ed::GetLinkBounds(100); });
+        session.Use([&]
+        {
+            for (size_t i = 0; i < geometry.Positions.size(); ++i)
+            {
+                const auto color = geometry.Colors[i];
+                if (color != ImColor(scene.OuterColor) && color != IM_COL32(255, 0, 255, 255)) continue;
+                const auto p = ed::ScreenToCanvas(geometry.Positions[i]);
+                test::Check(p.x >= bounds.x && p.x <= bounds.z && p.y >= bounds.y && p.y <= bounds.w,
+                    "bounds contain both outlines and selection at zoom %g", zoom);
+            }
+        });
+        scene.Outlined = false;
+        session.Run(2);
+        test::Check(test::FirstIndexOf(test::Capture(session.DrawList), ImColor(scene.OuterColor)) < 0,
+            "legacy submission also clears the outer stroke");
+    }
 }

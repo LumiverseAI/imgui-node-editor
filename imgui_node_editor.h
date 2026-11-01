@@ -525,11 +525,14 @@ IMGUI_NODE_EDITOR_API bool Link(LinkId id, PinId startPinId, PinId endPinId, con
 // Unlike Link(), no color is interpreted as an automatic-color sentinel.
 // The outline is painted behind the core on the same path and keeps the same
 // selectable identity. outlineThickness is the additional width on each side,
-// in canvas units. Selection/hover borders remain outside the complete stroke.
-// Zero outline alpha or width disables it. Non-finite or negative widths reject
+// in canvas units, with a one-screen-pixel minimum when enabled. An optional
+// outer stroke supports contrast across differently colored group backgrounds.
+// Selection/hover borders remain outside all strokes. Zero alpha or width disables
+// the corresponding outline. Non-finite or negative widths reject
 // the submission without changing the link. Submit only once per frame per ID.
 IMGUI_NODE_EDITOR_API bool LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
-    const ImVec4& color, const ImVec4& outlineColor, float thickness = 1.0f, float outlineThickness = 1.0f);
+    const ImVec4& color, const ImVec4& outlineColor, float thickness = 1.0f, float outlineThickness = 1.0f,
+    const ImVec4& outerColor = ImVec4(0, 0, 0, 0), float outerThickness = 1.0f);
 
 // Trigger a one-shot animated "flow" pulse along a link. Calling this once
 // is enough; the editor handles the time-bounded animation internally.

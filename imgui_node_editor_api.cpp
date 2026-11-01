@@ -262,12 +262,14 @@ bool ax::NodeEditor::Link(LinkId id, PinId startPinId, PinId endPinId, const ImV
 }
 
 bool ax::NodeEditor::LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
-    const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness)
+    const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness,
+    const ImVec4& outerColor, float outerThickness)
 {
-    if (!std::isfinite(thickness) || !std::isfinite(outlineThickness) || thickness < 0.0f || outlineThickness < 0.0f)
+    if (!std::isfinite(thickness) || !std::isfinite(outlineThickness) || !std::isfinite(outerThickness) ||
+        thickness < 0.0f || outlineThickness < 0.0f || outerThickness < 0.0f)
         return false;
     return CurrentEditor()->DoLink(id, startPinId, endPinId, ImColor(color), thickness,
-        ImColor(outlineColor), outlineThickness);
+        ImColor(outlineColor), outlineThickness, ImColor(outerColor), outerThickness);
 }
 
 void ax::NodeEditor::Flow(LinkId linkId, FlowDirection direction)

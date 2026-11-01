@@ -962,14 +962,22 @@ ed::NodeRegion ed::Node::GetRegion(const ImVec2& point) const
 // Link
 //
 //------------------------------------------------------------------------------
+float ed::Link::GetOutlineWidth() const
+{
+    return 2.0f * ((m_OutlineThickness > 0.0f ? VisibleStrokeThickness(Editor, m_OutlineThickness) : 0.0f)
+                + (m_OuterThickness > 0.0f ? VisibleStrokeThickness(Editor, m_OuterThickness) : 0.0f));
+}
+
 void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
 {
     if (flags == None)
     {
         drawList->ChannelsSetCurrent(c_LinkChannel_Links);
 
+        if (m_OuterThickness > 0.0f)
+            Draw(drawList, m_OuterColor, GetOutlineWidth());
         if (m_OutlineThickness > 0.0f)
-            Draw(drawList, m_OutlineColor, m_OutlineThickness * 2.0f);
+            Draw(drawList, m_OutlineColor, VisibleStrokeThickness(Editor, m_OutlineThickness) * 2.0f);
         Draw(drawList, m_Color, 0.0f);
     }
     else if (flags & Selected)
@@ -978,7 +986,7 @@ void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
 
         drawList->ChannelsSetCurrent(c_LinkChannel_Selection);
 
-        Draw(drawList, borderColor, m_OutlineThickness * 2.0f + c_LinkSelectedBorder);
+        Draw(drawList, borderColor, GetOutlineWidth() + c_LinkSelectedBorder);
     }
     else if (flags & Hovered)
     {
@@ -986,13 +994,13 @@ void ed::Link::Draw(ImDrawList* drawList, DrawFlags flags)
 
         drawList->ChannelsSetCurrent(c_LinkChannel_Selection);
 
-        Draw(drawList, borderColor, m_OutlineThickness * 2.0f + c_LinkHoveredBorder);
+        Draw(drawList, borderColor, GetOutlineWidth() + c_LinkHoveredBorder);
     }
     else if (flags & Highlighted)
     {
         drawList->ChannelsSetCurrent(c_LinkChannel_Selection);
 
-        Draw(drawList, m_HighlightColor, m_OutlineThickness * 2.0f + c_LinkHighlightedBorder);
+        Draw(drawList, m_HighlightColor, GetOutlineWidth() + c_LinkHighlightedBorder);
     }
 }
 
@@ -1226,7 +1234,7 @@ bool ed::Link::TestHit(const ImVec2& point, float extraThickness) const
     if (!m_IsLive)
         return false;
 
-    const auto maxDistance = m_Thickness + m_OutlineThickness + extraThickness;
+    const auto maxDistance = VisibleStrokeThickness(Editor, m_Thickness) + GetOutlineWidth() * 0.5f + extraThickness;
 
     auto bounds = GetCurveBounds();
     bounds.Expand(maxDistance);
@@ -1286,7 +1294,7 @@ ImRect ed::Link::GetBounds() const
         return ImRect();
 
     // What Draw() covers with the widest border.
-    const auto border = m_OutlineThickness * 2.0f + ImMax(c_LinkSelectedBorder, ImMax(c_LinkHighlightedBorder, c_LinkHoveredBorder));
+    const auto border = GetOutlineWidth() + ImMax(c_LinkSelectedBorder, ImMax(c_LinkHighlightedBorder, c_LinkHoveredBorder));
 
     // Include the zoom-stable minimum stroke and its antialias/pixel fringe.
     auto extent = (VisibleStrokeThickness(Editor, m_Thickness) + border) * 0.5f;
@@ -2019,7 +2027,7 @@ void ed::EditorContext::End()
 }
 
 bool ed::EditorContext::DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU32 color, float thickness,
-    ImU32 outlineColor, float outlineThickness)
+    ImU32 outlineColor, float outlineThickness, ImU32 outerColor, float outerThickness)
 {
     //auto& editorStyle = GetStyle();
 
@@ -2040,6 +2048,8 @@ bool ed::EditorContext::DoLink(LinkId id, PinId startPinId, PinId endPinId, ImU3
     link->m_Thickness     = thickness;
     link->m_OutlineColor  = outlineColor;
     link->m_OutlineThickness = (outlineColor & IM_COL32_A_MASK) != 0 ? outlineThickness : 0.0f;
+    link->m_OuterColor = outerColor;
+    link->m_OuterThickness = (outerColor & IM_COL32_A_MASK) != 0 ? outerThickness : 0.0f;
     link->m_IsLive        = true;
 
     link->UpdateEndpoints();
