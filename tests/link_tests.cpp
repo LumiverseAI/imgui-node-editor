@@ -58,6 +58,37 @@ int CountLinkVertices(const test::Session& session)
     return count;
 }
 
+
+// Measure triangle coverage at half opacity, not just opaque center vertices.
+// Older ImGui represents a thin AA line by an opaque centerline and alpha-zero
+// fringe vertices; counting only opaque vertices gives a false width of zero.
+float HalfOpacityWidth(const test::Geometry& geometry, ImU32 color)
+{
+    float low = FLT_MAX, high = -FLT_MAX;
+    const auto include = [&](float y) { low = ImMin(low, y); high = ImMax(high, y); };
+    for (size_t triangle = 0; triangle + 2 < geometry.Colors.size(); triangle += 3)
+    {
+        bool matching = true;
+        for (size_t corner = 0; corner < 3; ++corner)
+            matching = matching && ((geometry.Colors[triangle + corner] & ~IM_COL32_A_MASK) ==
+                                    (color & ~IM_COL32_A_MASK));
+        if (!matching) continue;
+        for (size_t corner = 0; corner < 3; ++corner)
+        {
+            const auto first = triangle + corner, second = triangle + (corner + 1) % 3;
+            const auto a = float((geometry.Colors[first] & IM_COL32_A_MASK) >> IM_COL32_A_SHIFT);
+            const auto b = float((geometry.Colors[second] & IM_COL32_A_MASK) >> IM_COL32_A_SHIFT);
+            if (a >= 127.5f) include(geometry.Positions[first].y);
+            if ((a < 127.5f) != (b < 127.5f))
+            {
+                const auto amount = (127.5f - a) / (b - a);
+                include(geometry.Positions[first].y + amount * (geometry.Positions[second].y - geometry.Positions[first].y));
+            }
+        }
+    }
+    return high >= low ? high - low : 0.0f;
+}
+
 } // namespace
 
 TEST_CASE(ThickLinkAtEdge, "links.thick_link_partly_on_screen_is_drawn", "CORE-15", test::TestFlags_None)
@@ -286,17 +317,7 @@ TEST_CASE(OutlinedLinkLowZoom, "links.outline_and_selection_remain_outside_core_
     });
     session.Run(2);
     const auto geometry = test::Capture(session.DrawList);
-    const auto width = [&](ImU32 color)
-    {
-        float low = FLT_MAX, high = -FLT_MAX;
-        for (size_t i = 0; i < geometry.Colors.size(); ++i)
-            if (geometry.Colors[i] == color)
-            {
-                low = ImMin(low, geometry.Positions[i].y);
-                high = ImMax(high, geometry.Positions[i].y);
-            }
-        return high - low;
-    };
+    const auto width = [&](ImU32 color) { return HalfOpacityWidth(geometry, color); };
     const auto core = width(c_LinkColor);
     const auto outline = width(ImColor(scene.OutlineColor));
     const auto selected = width(IM_COL32(255, 0, 255, 255));
@@ -329,17 +350,7 @@ TEST_CASE(OutlinedLinkOuterStroke, "links.two_contrast_strokes_share_one_path_at
         });
         session.Run(2);
         const auto geometry = test::Capture(session.DrawList);
-        const auto width = [&](ImU32 color)
-        {
-            float low = FLT_MAX, high = -FLT_MAX;
-            for (size_t i = 0; i < geometry.Colors.size(); ++i)
-                if (geometry.Colors[i] == color)
-                {
-                    low = ImMin(low, geometry.Positions[i].y);
-                    high = ImMax(high, geometry.Positions[i].y);
-                }
-            return high - low;
-        };
+        const auto width = [&](ImU32 color) { return HalfOpacityWidth(geometry, color); };
         const auto core = width(c_LinkColor), inner = width(ImColor(scene.OutlineColor));
         const auto outer = width(ImColor(scene.OuterColor)), selected = width(IM_COL32(255, 0, 255, 255));
         test::Check(core > 0 && inner >= core + 1.9f && outer >= inner + 1.9f && selected > outer,
