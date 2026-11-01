@@ -1002,7 +1002,9 @@ void ed::Link::Draw(ImDrawList* drawList, ImU32 color, float extraThickness) con
         return;
 
     const auto path      = GetPath();
-    const auto thickness = VisibleStrokeThickness(Editor, m_Thickness + extraThickness);
+    // Keep outer strokes outside the zoom-stable core instead of clamping each
+    // layer to the same minimum width at low zoom.
+    const auto thickness = VisibleStrokeThickness(Editor, m_Thickness) + extraThickness;
 
     for (int i = 0; i < path.m_SegmentCount; ++i)
     {
@@ -1287,7 +1289,7 @@ ImRect ed::Link::GetBounds() const
     const auto border = m_OutlineThickness * 2.0f + ImMax(c_LinkSelectedBorder, ImMax(c_LinkHighlightedBorder, c_LinkHoveredBorder));
 
     // Include the zoom-stable minimum stroke and its antialias/pixel fringe.
-    auto extent = VisibleStrokeThickness(Editor, m_Thickness + border) * 0.5f;
+    auto extent = (VisibleStrokeThickness(Editor, m_Thickness) + border) * 0.5f;
     for (auto pin : { m_StartPin, m_EndPin })
         if (pin->m_ArrowSize > 0.0f)
             extent = ImMax(extent, ImMax((pin->m_ArrowWidth + border) * 0.5f, border));
