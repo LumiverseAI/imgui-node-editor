@@ -531,8 +531,13 @@ IMGUI_NODE_EDITOR_API bool Link(LinkId id, PinId startPinId, PinId endPinId, con
 // the corresponding outline. Non-finite or negative widths reject
 // the submission without changing the link. Submit only once per frame per ID.
 IMGUI_NODE_EDITOR_API bool LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
-    const ImVec4& color, const ImVec4& outlineColor, float thickness = 1.0f, float outlineThickness = 1.0f,
-    const ImVec4& outerColor = ImVec4(0, 0, 0, 0), float outerThickness = 1.0f);
+    const ImVec4& color, const ImVec4& outlineColor, float thickness = 1.0f, float outlineThickness = 1.0f);
+
+// The same link with a second outer contrast stroke. Both outlines retain one
+// selectable identity; a transparent color or zero width disables that stroke.
+IMGUI_NODE_EDITOR_API bool LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
+    const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness,
+    const ImVec4& outerColor, float outerThickness);
 
 // Trigger a one-shot animated "flow" pulse along a link. Calling this once
 // is enough; the editor handles the time-bounded animation internally.

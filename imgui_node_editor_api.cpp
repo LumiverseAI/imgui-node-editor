@@ -262,6 +262,13 @@ bool ax::NodeEditor::Link(LinkId id, PinId startPinId, PinId endPinId, const ImV
 }
 
 bool ax::NodeEditor::LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
+    const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness)
+{
+    return LinkWithOutline(id, startPinId, endPinId, color, outlineColor, thickness, outlineThickness,
+        ImVec4(0, 0, 0, 0), 0.0f);
+}
+
+bool ax::NodeEditor::LinkWithOutline(LinkId id, PinId startPinId, PinId endPinId,
     const ImVec4& color, const ImVec4& outlineColor, float thickness, float outlineThickness,
     const ImVec4& outerColor, float outerThickness)
 {
