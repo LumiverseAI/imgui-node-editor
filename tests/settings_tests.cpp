@@ -258,3 +258,72 @@ TEST_CASE(CLocalePreserved, "settings.c_locale_is_preserved", "JSON-2", test::Te
     if (tested == 0)
         test::Skip("no locale with a decimal comma is installed");
 }
+
+TEST_CASE(DocumentOwnedSettings, "settings.document_owned_partial_graph_skips_all_settings_work", "UIKIT-198", test::TestFlags_None)
+{
+    int callbacks = 0;
+    auto config = test::MakeConfig(nullptr);
+    config.EnableSettingsPersistence = false;
+    config.UserPointer = &callbacks;
+    config.BeginSaveSession = config.EndSaveSession = [](void* state) { ++*static_cast<int*>(state); };
+    config.LoadSettings = [](char*, void* state) -> size_t { ++*static_cast<int*>(state); return 0; };
+    config.LoadNodeSettings = [](ed::NodeId, char*, void* state) -> size_t { ++*static_cast<int*>(state); return 0; };
+    config.SaveSettings = [](const char*, size_t, ed::SaveReasonFlags, void* state) { ++*static_cast<int*>(state); return true; };
+    config.SaveNodeSettings = [](ed::NodeId, const char*, size_t, ed::SaveReasonFlags, void* state) { ++*static_cast<int*>(state); return true; };
+    NodeEditorTestSettingsWork() = {};
+    {
+        test::Session session(config);
+        session.DefaultContent = [](int frame)
+        {
+            // Warm up the full graph, then submit only a visible portion of it.
+            for (uintptr_t id = 1; id <= (frame < 3 ? 1000 : 30); ++id)
+            {
+                if (frame == 0)
+                    ed::SetNodePosition(id, ImVec2(float(id % 20) * 140.0f, float(id / 20) * 80.0f));
+                ed::BeginNode(id);
+                ImGui::Text("Node %d", int(id));
+                ed::EndNode();
+            }
+        };
+        session.Run(3);
+        session.Use([]
+        {
+            ed::SelectNode(999);
+            ed::SetNodePosition(999, ImVec2(1234.5f, 2048.5f));
+            ed::RestoreNodeState(999);
+        });
+        test::MouseMove(ImVec2(500.0f, 300.0f));
+        test::MouseWheel(1.0f);
+        session.Run(120);
+        const auto position = session.Use([] { return ed::GetNodePosition(999); });
+        const bool selected = session.Use([] { return ed::IsNodeSelected(999); });
+        test::Check(position.x == 1234.0f && position.y == 2048.0f,
+            "a non-submitted node retains live geometry: (%g, %g)", position.x, position.y);
+        test::Check(selected, "a non-submitted node retains its selection");
+        test::Check(session.Use([] { return test::CurrentZoom(); }) != 1.0f, "wheel navigation works without settings");
+        session.Frame([](int) { ed::BeginNode(999); ImGui::TextUnformatted("Revealed"); ed::EndNode(); });
+        const auto revealed = session.Use([] { return ed::GetNodePosition(999); });
+        test::Check(revealed.x == position.x && revealed.y == position.y, "revealing a node keeps its position");
+    }
+    // Include destruction: that path also normally saves.
+    test::Check(callbacks == 0, "no settings callback runs, including loading and destruction: %d", callbacks);
+    const auto work = NodeEditorTestSettingsWork();
+    test::Check(work.Lookups == 0 && work.Serializations == 0,
+        "no settings lookup or serialization: %llu lookups, %llu serializations", work.Lookups, work.Serializations);
+    {
+        test::Session fresh(config);
+        const auto position = fresh.Use([] { return ed::GetNodePosition(999); });
+        test::Check(position.x == FLT_MAX, "a fresh context starts independently of the old document");
+    }
+}
+
+TEST_CASE(PersistenceDefaultControl, "settings.persistence_remains_enabled_by_default", "UIKIT-198", test::TestFlags_None)
+{
+    test::Check(ed::Config().EnableSettingsPersistence, "existing callers retain persistence by default");
+    NodeEditorTestSettingsWork() = {};
+    test::Storage storage;
+    CheckRoundTrip(RoundTrip(storage), storage, "default configuration");
+    const auto work = NodeEditorTestSettingsWork();
+    test::Check(work.Lookups > 0 && work.Serializations > 0,
+        "the positive control exercises the counters: %llu lookups, %llu serializations", work.Lookups, work.Serializations);
+}

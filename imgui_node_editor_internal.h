@@ -1384,6 +1384,7 @@ struct IMGUI_NODE_EDITOR_API EditorContext
     void SetGroupSize(NodeId nodeId, const ImVec2& size);
     ImVec2 GetNodePosition(NodeId nodeId);
     ImVec2 GetNodeSize(NodeId nodeId);
+    ImVec2 GetGroupSize(NodeId nodeId);
 
     void SetNodeZPosition(NodeId nodeId, float z);
     float GetNodeZPosition(NodeId nodeId);

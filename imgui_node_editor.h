@@ -132,6 +132,12 @@ struct Config
     //   otherwise the node grows at each frame (this is detected, and reported with an IM_ASSERT).
     bool                    ForceWindowContentWidthToNodeWidth;
 
+    // False for document-owned editors. No settings are loaded, indexed or serialized;
+    // no settings callback or file I/O runs. Live geometry, selection and navigation
+    // still work, including partially submitted graphs. RestoreNodeState becomes a no-op.
+    // Set this before CreateEditor(); the default preserves legacy persistence.
+    bool                    EnableSettingsPersistence;
+
     Config()
         : SettingsFile("NodeEditor.json")
         , BeginSaveSession(nullptr)
@@ -154,6 +160,7 @@ struct Config
         , SmoothZoomPower(1.3f)
 # endif
         , ForceWindowContentWidthToNodeWidth(false)
+        , EnableSettingsPersistence(true)
     {
     }
 };
@@ -599,12 +606,16 @@ IMGUI_NODE_EDITOR_API void SetNodePosition(NodeId nodeId, const ImVec2& editorPo
 IMGUI_NODE_EDITOR_API void SetGroupSize(NodeId nodeId, const ImVec2& size); // Sets the size of a group node
 IMGUI_NODE_EDITOR_API ImVec2 GetNodePosition(NodeId nodeId); // In canvas coords; (FLT_MAX, FLT_MAX) if unknown
 IMGUI_NODE_EDITOR_API ImVec2 GetNodeSize(NodeId nodeId); // In canvas coords; (0, 0) before the node was drawn
+// The resizable rectangle, excluding the title strip and padding. In canvas coords;
+// (0, 0) for an unknown or ordinary node. Use with SetGroupSize for document-owned groups.
+IMGUI_NODE_EDITOR_API ImVec2 GetGroupSize(NodeId nodeId);
 // Moves the node (a group: with its nodes) to the center of the view, when it is next drawn.
 IMGUI_NODE_EDITOR_API void CenterNodeOnScreen(NodeId nodeId);
 IMGUI_NODE_EDITOR_API void SetNodeZPosition(NodeId nodeId, float z); // Sets node z position, nodes with higher value are drawn over nodes with lower value
 IMGUI_NODE_EDITOR_API float GetNodeZPosition(NodeId nodeId); // Returns node z position, defaults is 0.0f
 
-// Re-load the node's position/size from the editor's persisted settings
+// Re-load the node's position/size from the editor's persisted settings (a no-op when
+// Config::EnableSettingsPersistence is false)
 // (the SettingsFile, if any). Useful right after creating a node whose
 // previous layout you want to bring back without the user having to drag it.
 IMGUI_NODE_EDITOR_API void RestoreNodeState(NodeId nodeId);

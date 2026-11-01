@@ -32,6 +32,7 @@ In the order of the commits:
 | Mouse | `ed::GetMousePosOnCanvas()`: the mouse in canvas coordinates, also where the editor is suspended |
 | Multiline text | `ed::InputTextMultiline()`: a multiline text field that works inside a node |
 | Child windows | A child window begun inside the editor is reported with an explanation, instead of silently misbehaving |
+| Document state | `Config::EnableSettingsPersistence=false` bypasses settings lookup, loading, serialization, callbacks and file I/O while retaining live geometry/selection. `GetGroupSize()` reports the resizable rectangle separately from its title and padding |
 | Node width | `Config::ForceWindowContentWidthToNodeWidth`: separators, headers, wrapped text and default item widths use the width of the node. A node that grows at each frame, or that collapses to the width of one character, is detected and explained |
 | Links | Angled links (upstream PR 119): a link that would pass through its nodes is routed around them. Optional: `Style::AngledLinks`. The default link color follows the light / dark theme |
 | Input | `EditorContext::DisableUserInputThisFrame()`: a widget inside a node (a plot...) can keep the mouse for itself |
@@ -246,3 +247,21 @@ mouse, while the test engine simulates the mouse.
 The CI of this repository (`.github/workflows/tests.yml`) does the same thing with the `main` branch of Dear ImGui Bundle, in which
 it replaces imgui-node-editor by the commit under test. It also runs every week. A second job checks that the library compiles against a stock Dear ImGui
 (docking and master), that the patches of chapter 3 apply to it, and that the library compiles with the patched Dear ImGui.
+
+
+### Document-owned state
+
+Applications that author node positions and group sizes in their own document can set
+`config.EnableSettingsPersistence = false` before `CreateEditor()`. Unlike a null
+`SettingsFile`, this mode skips the settings cache and serialization itself, including
+per-node callbacks. The default remains `true` for existing applications.
+
+Live positions, group sizes, selection, pan and zoom remain editor-owned interaction state.
+Omitting nodes during partial submission does not erase that state. `RestoreNodeState()`
+does nothing in this mode; reapply authored geometry with `SetNodePosition()` and
+`SetGroupSize()`. `GetGroupSize()` returns the resizable rectangle in canvas coordinates,
+excluding the title and padding, and returns zero for unknown or ordinary nodes.
+
+The headless settings tests count settings lookups and both global/per-node serialization.
+They exercise retained geometry, groups, selection and partial submission with persistence
+disabled, and use the default persistent mode as a positive control for those counters.

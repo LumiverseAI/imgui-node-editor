@@ -437,6 +437,11 @@ void ax::NodeEditor::CenterNodeOnScreen(NodeId nodeId)
         node->CenterOnScreenInNextFrame();
 }
 
+ImVec2 ax::NodeEditor::GetGroupSize(NodeId nodeId)
+{
+    return CurrentEditor()->GetGroupSize(nodeId);
+}
+
 void ax::NodeEditor::SetNodeZPosition(NodeId nodeId, float z)
 {
     CurrentEditor()->SetNodeZPosition(nodeId, z);
